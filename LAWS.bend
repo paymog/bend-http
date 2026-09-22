@@ -55,3 +55,10 @@ law cl_te_rejects:
 # RFC 9112 §6.3 (6): response Content-Length is the body.
 law parse_res_body:
   {Http.res_body(Http.parse_res("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")) == "ok" : String}
+
+# RFC 9112 §7.1: one data chunk then last-chunk.
+law chunk_empty:
+  {Http.chunk.decode("0\r\n\r\n") == Some{""} : Maybe<&2, String>}
+
+law chunk_hello:
+  {Http.chunk.decode("5\r\nhello\r\n0\r\n\r\n") == Some{"hello"} : Maybe<&2, String>}

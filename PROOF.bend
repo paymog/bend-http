@@ -78,3 +78,9 @@ def Laws.cl_te_rejects(b):
 
 def Laws.parse_res_body():
   {==}
+
+def Laws.chunk_empty():
+  {==}
+
+def Laws.chunk_hello():
+  {==}
