@@ -6,10 +6,27 @@ import Base
 #   Http.get("127.0.0.1", 8080, "localhost", "/")
 
 type Req is Data:
-  Req{method: String, path: String, body: String}
+  Req{method: String, path: String, headers: Map<&2, String>, body: String}
 
 type Res is Data:
-  Res{status: U32, body: String}
+  Res{status: U32, headers: Map<&2, String>, body: String}
+
+def empty() -> Map<&2, String>:
+  Map.new(&2, String)
+
+def sanitize.cons(ch: Char, rest: String, drop: Bool) -> String:
+  match drop:
+    case True{}:
+      rest
+    case False{}:
+      SCon{ch, rest}
+
+def sanitize(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{+c}, t}:
+      sanitize.cons(Chr{c}, sanitize(t), Bool.or(U32.is_eq(c, 13), U32.is_eq(c, 10)))
 
 def drop_cr.if(+s: String, cr: Bool) -> String:
   match cr:
@@ -20,16 +37,6 @@ def drop_cr.if(+s: String, cr: Bool) -> String:
 
 def drop_cr(+s: String) -> String:
   drop_cr.if(s, String.ends_with(s, "\r"))
-
-def first_line.list(xs: List<&2, String>) -> String:
-  match xs:
-    case Nil{}:
-      ""
-    case Con{h, t}:
-      drop_cr(h)
-
-def first_line(s: String) -> String:
-  first_line.list(String.lines(s))
 
 def req_line.path(m: String, t: List<&2, String>) -> String & String:
   match t:
@@ -63,18 +70,77 @@ def split_at_blank.go(s: String, e: Bool, w: U32, acc: String) -> String & Strin
 def split_at_blank(s: String) -> String & String:
   split_at_blank.go(s, False{}, 0, SNil{})
 
-def parse.words(mp: String & String, b: String) -> Req:
+def split_colon.go(s: String, +acc: String) -> String & String:
+  match s:
+    case SNil{}:
+      (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(String & String, U32.is_eq(c, 58), (String.reverse(acc), t), split_colon.go(t, SCon{Chr{c}, acc}))
+
+def split_colon(s: String) -> String & String:
+  split_colon.go(s, SNil{})
+
+def header_put.kv(m: Map<&2, String>, kv: String & String) -> Map<&2, String>:
+  (k, v) = kv
+  Map.set(&2, String, m, String.to_lower(k), String.trim(v))
+
+def header_put.if(m: Map<&2, String>, line: String, empty: Bool) -> Map<&2, String>:
+  match empty:
+    case True{}:
+      m
+    case False{}:
+      header_put.kv(m, split_colon(line))
+
+def header_put(m: Map<&2, String>, +line: String) -> Map<&2, String>:
+  header_put.if(m, line, String.is_empty(line))
+
+def parse.headers(xs: List<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
+  match xs:
+    case Nil{}:
+      m
+    case Con{line, rest}:
+      parse.headers(rest, header_put(m, drop_cr(line)))
+
+def clash.and(cl: Bool, r: Map<&2, String> & Bool) -> Bool:
+  (h, te) = r
+  Bool.and(cl, te)
+
+def clash.te(r: Map<&2, String> & Bool) -> Bool:
+  (h, cl) = r
+  clash.and(cl, Map.has(&2, String, h, "transfer-encoding"))
+
+def clash(+h: Map<&2, String>) -> Bool:
+  clash.te(Map.has(&2, String, h, "content-length"))
+
+def parse.clash(method: String, path: String, h: Map<&2, String>, b: String, bad: Bool) -> Maybe<&2, Req>:
+  match bad:
+    case True{}:
+      None{}
+    case False{}:
+      Some{Req{method, path, h, b}}
+
+def parse.done(method: String, path: String, +h: Map<&2, String>, b: String) -> Maybe<&2, Req>:
+  parse.clash(method, path, h, b, clash(h))
+
+def parse.rest(mp: String & String, rest: List<&2, String>, b: String) -> Maybe<&2, Req>:
   (method, path) = mp
-  Req{method, path, b}
+  parse.done(method, path, parse.headers(rest, empty()), b)
 
-def parse.line(line: String, b: String) -> Req:
-  parse.words(req_line(line), b)
+def parse.lines(xs: List<&2, String>, b: String) -> Maybe<&2, Req>:
+  match xs:
+    case Nil{}:
+      None{}
+    case Con{line, rest}:
+      parse.rest(req_line(drop_cr(line)), rest, b)
 
-def parse.of(hb: String & String) -> Req:
+def parse.head(head: String, b: String) -> Maybe<&2, Req>:
+  parse.lines(String.lines(head), b)
+
+def parse.of(hb: String & String) -> Maybe<&2, Req>:
   (head, b) = hb
-  parse.line(first_line(head), b)
+  parse.head(head, b)
 
-def parse(raw: String) -> Req:
+def parse(raw: String) -> Maybe<&2, Req>:
   parse.of(split_at_blank(raw))
 
 def body.of(hb: String & String) -> String:
@@ -84,12 +150,22 @@ def body.of(hb: String & String) -> String:
 def body(s: String) -> String:
   body.of(split_at_blank(s))
 
-def response(status: U32, body: String) -> String:
-  ("HTTP/1.1 " ++ U32.show(status) ++ " OK\r\nContent-Type: text/plain\r\nConnection: close") ++ ("\r\n\r\n" ++ body)
+def headers_block.go(xs: List<&2, Sigma<&2, &2, String, _ => String>>, acc: String) -> String:
+  match xs:
+    case Nil{}:
+      acc
+    case (k, v) <> t:
+      headers_block.go(t, acc ++ ("\r\n" ++ sanitize(k) ++ ": " ++ sanitize(v)))
+
+def headers_block(h: Map<&2, String>) -> String:
+  headers_block.go(Map.to_list(&2, String, h), "")
+
+def response(status: U32, headers: Map<&2, String>, body: String) -> String:
+  ("HTTP/1.1 " ++ U32.show(status) ++ " OK" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
 
 def encode(r: Res) -> String:
-  Res{status, body} = r
-  response(status, body)
+  Res{status, headers, body} = r
+  response(status, headers, body)
 
 def get_req(host: String, path: String) -> String:
   "GET " ++ path ++ " HTTP/1.1\r\nHost: " ++ host ++ "\r\nConnection: close\r\n\r\n"
@@ -125,11 +201,25 @@ def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
   (s, r) = m
   Socket.close(s)
 
-def reply_ok(~h: Req -> IO(Res), s: Socket, raw: String) -> IO(Unit):
+def reply_send(s: Socket, res: Res) -> IO(Unit):
   do IO<Unit>:
-    res  : Res <- h(parse(raw))
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(s, encode(res))
     sent_fin(sent)
+
+def reply_handle(~h: Req -> IO(Res), s: Socket, req: Req) -> IO(Unit):
+  do IO<Unit>:
+    res : Res <- h(req)
+    reply_send(s, res)
+
+def reply_parsed(~h: Req -> IO(Res), s: Socket, m: Maybe<&2, Req>) -> IO(Unit):
+  match m:
+    case None{}:
+      reply_send(s, Res{400, empty(), "bad"})
+    case Some{req}:
+      reply_handle(~h, s, req)
+
+def reply_ok(~h: Req -> IO(Res), s: Socket, raw: String) -> IO(Unit):
+  reply_parsed(~h, s, parse(raw))
 
 def reply(~h: Req -> IO(Res), m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Unit):
   (s, r) = m

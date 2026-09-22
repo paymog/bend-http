@@ -15,13 +15,29 @@ law body_suffix:
 # LAW: a response is some head, then a blank line, then the page.
 law page_after_blank:
   for status: U32
+  for headers: Map<&2, String>
   for +page: String
   exs head: String
-  {head ++ ("\r\n\r\n" ++ page) == Http.response(status, page) : String}
+  {head ++ ("\r\n\r\n" ++ page) == Http.response(status, headers, page) : String}
 
-# LAW: equal 200 responses come from equal pages.
+# LAW: equal 200 empty-header responses come from equal pages.
 law response_inj:
   for +a: String
   for +b: String
-  for e: {Http.response(200, a) == Http.response(200, b) : String}
+  for e: {Http.response(200, Http.empty(), a) == Http.response(200, Http.empty(), b) : String}
   {a == b : String}
+
+# LAW: sanitize drops CR.
+law sanitize_drop_cr:
+  for s: String
+  {Http.sanitize(SCon{Chr{13}, s}) == Http.sanitize(s) : String}
+
+# LAW: sanitize drops LF.
+law sanitize_drop_lf:
+  for s: String
+  {Http.sanitize(SCon{Chr{10}, s}) == Http.sanitize(s) : String}
+
+# LAW: Content-Length and Transfer-Encoding together are rejected.
+law cl_te_rejects:
+  for b: String
+  {Http.parse("GET / HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}

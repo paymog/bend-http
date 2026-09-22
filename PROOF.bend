@@ -32,8 +32,8 @@ def suffix_go(s: String, e: Bool, w: U32, acc: String) ->
 def Laws.body_suffix(s):
   suffix_go(s, False{}, 0, SNil{})
 
-def Laws.page_after_blank(status, page):
-  ("HTTP/1.1 " ++ U32.show(status) ++ " OK\r\nContent-Type: text/plain\r\nConnection: close", {==})
+def Laws.page_after_blank(status, headers, page):
+  ("HTTP/1.1 " ++ U32.show(status) ++ " OK" ++ Http.headers_block(headers), {==})
 
 def drop(n: Nat, s: String) -> String:
   match n:
@@ -47,4 +47,17 @@ def drop(n: Nat, s: String) -> String:
           drop(p, t)
 
 def Laws.response_inj(a, b, e):
-  Equal.cong(String, String, s => drop(64n, s), Http.response(200, a), Http.response(200, b), e)
+  Equal.cong(String, String, s => drop(19n, s), Http.response(200, Http.empty(), a), Http.response(200, Http.empty(), b), e)
+
+def Laws.sanitize_drop_cr(s):
+  {==}
+
+def Laws.sanitize_drop_lf(s):
+  {==}
+
+def Laws.cl_te_rejects(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}

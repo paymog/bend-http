@@ -1,11 +1,21 @@
 import Base
 import ./http.bend as Http
 
-def show(req: Http.Req) -> IO(Unit):
-  Http.Req{method, path, body} = req
+def show_req(req: Http.Req) -> IO(Unit):
+  Http.Req{method, path, headers, body} = req
   do IO<Unit>:
     IO.print(method ++ " " ++ path ++ " " ++ body)
-    IO.print(Http.encode(Http.Res{200, "ok"}))
+    IO.print(Http.encode(Http.Res{200, Http.empty(), "ok"}))
+
+def show(m: Maybe<&2, Http.Req>) -> IO(Unit):
+  match m:
+    case None{}:
+      IO.print("none")
+    case Some{req}:
+      show_req(req)
 
 def main() -> IO(Unit):
-  show(Http.parse("GET /x HTTP/1.1\r\n\r\nhello"))
+  do IO<Unit>:
+    show(Http.parse("GET /x HTTP/1.1\r\n\r\nhello"))
+    show(Http.parse("GET / HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n"))
+    IO.print(Http.sanitize("a\rb\nc"))
