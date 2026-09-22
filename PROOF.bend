@@ -75,3 +75,6 @@ def Laws.cl_te_rejects(b):
       {==}
     case SCon{Chr{a}, t}:
       {==}
+
+def Laws.parse_res_body():
+  {==}

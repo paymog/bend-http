@@ -51,3 +51,7 @@ law parse_zero_body:
 law cl_te_rejects:
   for b: String
   {Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}
+
+# RFC 9112 §6.3 (6): response Content-Length is the body.
+law parse_res_body:
+  {Http.res_body(Http.parse_res("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")) == "ok" : String}

@@ -278,6 +278,83 @@ def parse.of(hb: String & String) -> Maybe<&2, Req>:
 def parse(raw: String) -> Maybe<&2, Req>:
   parse.of(split_at_blank(raw))
 
+def parse.res.cl(+h: Map<&2, String>, rest: String, hascl: Bool) -> Maybe<&2, String>:
+  match hascl:
+    case False{}:
+      Some{rest}
+    case True{}:
+      parse.take(rest, parse_u32(header(h, "content-length")))
+
+def parse.res.te(+h: Map<&2, String>, rest: String, te: Bool) -> Maybe<&2, String>:
+  match te:
+    case True{}:
+      None{}
+    case False{}:
+      parse.res.cl(h, rest, has_header(h, "content-length"))
+
+def parse.res.body(+h: Map<&2, String>, rest: String) -> Maybe<&2, String>:
+  parse.res.te(h, rest, has_header(h, "transfer-encoding"))
+
+def parse.res.finish(status: U32, h: Map<&2, String>, body: Maybe<&2, String>) -> Maybe<&2, Res>:
+  match body:
+    case None{}:
+      None{}
+    case Some{b}:
+      Some{Res{status, h, b}}
+
+def parse.res.fields(status: U32, rest: String, fs: Maybe<&2, Map<&2, String>>) -> Maybe<&2, Res>:
+  match fs:
+    case None{}:
+      None{}
+    case Some{+h}:
+      parse.res.finish(status, h, parse.res.body(h, rest))
+
+def parse.res.num(code: Maybe<&2, U32>, headers: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+  match code:
+    case None{}:
+      None{}
+    case Some{n}:
+      parse.res.fields(n, rest, parse.headers(headers, FieldsOk{empty()}))
+
+def parse.res.ver(ver: String, code: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Res>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      parse.res.num(parse_u32(code), headers, rest)
+
+def parse.res.start3(mpv: String & String & String, headers: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+  (+ver, code, reason) = mpv
+  parse.res.ver(ver, code, headers, rest, String.eq(ver, "HTTP/1.1"))
+
+def parse.res.lines(xs: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+  match xs:
+    case Nil{}:
+      None{}
+    case Con{line, headers}:
+      parse.res.start3(start_line(line), headers, rest)
+
+def parse.res.head(head: String, rest: String) -> Maybe<&2, Res>:
+  parse.res.lines(String.lines(head), rest)
+
+def parse.res.of(hb: String & String) -> Maybe<&2, Res>:
+  (head, rest) = hb
+  parse.res.head(head, rest)
+
+def parse_res(raw: String) -> Maybe<&2, Res>:
+  parse.res.of(split_at_blank(raw))
+
+def res_body.res(res: Res) -> String:
+  Res{status, headers, body} = res
+  body
+
+def res_body(m: Maybe<&2, Res>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{res}:
+      res_body.res(res)
+
 def got_body.req(req: Req) -> String:
   Req{method, path, headers, body} = req
   body
@@ -320,35 +397,55 @@ def encode(r: Res) -> String:
   Res{status, headers, +body} = r
   response(status, Map.set(&2, String, headers, "content-length", U32.show(nat_u32(String.length(body)))), body)
 
-def get_req(host: String, path: String) -> String:
-  "GET " ++ path ++ " HTTP/1.1\r\nHost: " ++ host ++ "\r\nConnection: close\r\n\r\n"
+def request(method: String, path: String, headers: Map<&2, String>, body: String) -> String:
+  (method ++ " " ++ path ++ " HTTP/1.1" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
 
-def get_tail(head: String, m: Socket & Result<&1, &1, U32 & String, String>) -> IO(String):
+def encode_req(method: String, path: String, host: String, +body: String) -> String:
+  request(method, path, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, empty(), "host", host), "connection", "close"), "content-length", U32.show(nat_u32(String.length(body)))), body)
+
+# ponytail: two recvs; loop when bodies exceed 16KiB
+def fetch_tail(head: String, m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, Res>):
   (s, r) = m
-  do IO<String>:
+  do IO<Maybe<&2, Res>>:
     tail : String <- IO.pass(String, r)
     Socket.close(s)
-    return body(head ++ tail)
+    return parse_res(head ++ tail)
 
-def get_head(m: Socket & Result<&1, &1, U32 & String, String>) -> IO(String):
+def fetch_head(m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, Res>):
   (s, r) = m
-  do IO<String>:
+  do IO<Maybe<&2, Res>>:
     head : String <- IO.pass(String, r)
     rest : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 8192)
-    get_tail(head, rest)
+    fetch_tail(head, rest)
 
-def get_sent(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(String):
+def fetch_sent(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
-  do IO<String>:
+  do IO<Maybe<&2, Res>>:
     IO.pass(Unit, r)
     read : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 8192)
-    get_head(read)
+    fetch_head(read)
+
+def fetch(method: String, ip: String, port: U32, host: String, path: String, body: String) -> IO(Maybe<&2, Res>):
+  do IO<Maybe<&2, Res>>:
+    c    : Socket <- IO.try(Socket, TCP.connect(ip, port))
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(c, encode_req(method, path, host, body))
+    fetch_sent(sent)
+
+def get_body.res(res: Res) -> String:
+  Res{status, headers, body} = res
+  body
+
+def get_body(m: Maybe<&2, Res>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{res}:
+      get_body.res(res)
 
 def get(ip: String, port: U32, host: String, path: String) -> IO(String):
   do IO<String>:
-    c    : Socket <- IO.try(Socket, TCP.connect(ip, port))
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(c, get_req(host, path))
-    get_sent(sent)
+    m : Maybe<&2, Res> <- fetch("GET", ip, port, host, path, "")
+    return get_body(m)
 
 def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
   (s, r) = m

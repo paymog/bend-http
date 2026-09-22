@@ -20,4 +20,5 @@ def main() -> IO(Unit):
     show(Http.parse("GET /x HTTP/1.1\r\nHost: x\r\n\r\nhello"))
     show(Http.parse("GET /x HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello"))
     show(Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n"))
+    IO.print(Http.res_body(Http.parse_res("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")))
     IO.print(Http.sanitize("a\rb\nc"))
