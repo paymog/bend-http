@@ -37,7 +37,17 @@ law sanitize_drop_lf:
   for s: String
   {Http.sanitize(SCon{Chr{10}, s}) == Http.sanitize(s) : String}
 
-# LAW: Content-Length and Transfer-Encoding together are rejected.
+# RFC 9112 §3.2: HTTP/1.1 request without Host is not a message.
+law http11_needs_host:
+  for b: String
+  {Http.parse("GET / HTTP/1.1\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}
+
+# RFC 9112 §6.3 (7): no CL and no TE ⇒ request body length 0.
+law parse_zero_body:
+  for b: String
+  {Http.got_body(Http.parse("GET / HTTP/1.1\r\nHost: x\r\n\r\n" ++ b)) == "" : String}
+
+# RFC 9112 §6.1/6.3: Transfer-Encoding without a chunked decoder is rejected.
 law cl_te_rejects:
   for b: String
-  {Http.parse("GET / HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}
+  {Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}

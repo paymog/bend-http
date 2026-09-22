@@ -1,15 +1,18 @@
 import Base
 
-# HTTP/1.1 over TCP. No TLS, no DNS, no chunked.
+# HTTP/1.1 codec (RFC 9112). No TLS, no DNS, no chunked.
+# parse: start-line → field lines → blank → body length (§6.3).
 #   import ./http.bend as Http
-#   Http.serve(~handler, 8080)
-#   Http.get("127.0.0.1", 8080, "localhost", "/")
 
 type Req is Data:
   Req{method: String, path: String, headers: Map<&2, String>, body: String}
 
 type Res is Data:
   Res{status: U32, headers: Map<&2, String>, body: String}
+
+type Fields is Data:
+  FieldsBad{}
+  FieldsOk{m: Map<&2, String>}
 
 def empty() -> Map<&2, String>:
   Map.new(&2, String)
@@ -38,22 +41,26 @@ def drop_cr.if(+s: String, cr: Bool) -> String:
 def drop_cr(+s: String) -> String:
   drop_cr.if(s, String.ends_with(s, "\r"))
 
-def req_line.path(m: String, t: List<&2, String>) -> String & String:
-  match t:
-    case Nil{}:
-      (m, "")
-    case Con{p, u}:
-      (m, p)
+def take_sp.go(s: String, +acc: String) -> String & String:
+  match s:
+    case SNil{}:
+      (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(String & String, U32.is_eq(c, 32), (String.reverse(acc), t), take_sp.go(t, SCon{Chr{c}, acc}))
 
-def req_line.list(xs: List<&2, String>) -> String & String:
-  match xs:
-    case Nil{}:
-      ("", "")
-    case Con{m, t}:
-      req_line.path(m, t)
+def take_sp(s: String) -> String & String:
+  take_sp.go(s, SNil{})
 
-def req_line(s: String) -> String & String:
-  req_line.list(String.split(s, ' '))
+def start_line.ver(m: String, pv: String & String) -> String & String & String:
+  (p, v) = pv
+  (m, p, drop_cr(v))
+
+def start_line.rest(mr: String & String) -> String & String & String:
+  (m, r) = mr
+  start_line.ver(m, take_sp(r))
+
+def start_line(s: String) -> String & String & String:
+  start_line.rest(take_sp(s))
 
 def split_at_blank.go(s: String, e: Bool, w: U32, acc: String) -> String & String:
   match s:
@@ -80,68 +87,207 @@ def split_colon.go(s: String, +acc: String) -> String & String:
 def split_colon(s: String) -> String & String:
   split_colon.go(s, SNil{})
 
-def header_put.kv(m: Map<&2, String>, kv: String & String) -> Map<&2, String>:
-  (k, v) = kv
-  Map.set(&2, String, m, String.to_lower(k), String.trim(v))
+def has_header.of(r: Map<&2, String> & Bool) -> Bool:
+  (h, b) = r
+  b
 
-def header_put.if(m: Map<&2, String>, line: String, empty: Bool) -> Map<&2, String>:
-  match empty:
+def has_header(+h: Map<&2, String>, k: String) -> Bool:
+  has_header.of(Map.has(&2, String, h, k))
+
+def header.of(r: Map<&2, String> & String) -> String:
+  (h, v) = r
+  v
+
+def header(+h: Map<&2, String>, k: String) -> String:
+  header.of(Map.get(String, "", h, k))
+
+def folded(+line: String) -> Bool:
+  Bool.or(String.starts_with(line, " "), String.starts_with(line, "\t"))
+
+def tracked(+k: String) -> Bool:
+  Bool.or(String.eq(k, "host"), String.eq(k, "content-length"))
+
+def fields_put.dup(m: Map<&2, String>, k: String, v: String, bad: Bool) -> Fields:
+  match bad:
     case True{}:
-      m
+      FieldsBad{}
     case False{}:
-      header_put.kv(m, split_colon(line))
+      FieldsOk{Map.set(&2, String, m, k, v)}
 
-def header_put(m: Map<&2, String>, +line: String) -> Map<&2, String>:
-  header_put.if(m, line, String.is_empty(line))
+def fields_put.key(+m: Map<&2, String>, +k: String, v: String) -> Fields:
+  fields_put.dup(m, k, v, Bool.and(tracked(k), has_header(m, k)))
 
-def parse.headers(xs: List<&2, String>, m: Map<&2, String>) -> Map<&2, String>:
+def fields_put.kv(m: Map<&2, String>, kv: String & String) -> Fields:
+  (k, v) = kv
+  fields_put.key(m, String.to_lower(k), String.trim(v))
+
+def fields_put.fold(m: Map<&2, String>, line: String, fold: Bool) -> Fields:
+  match fold:
+    case True{}:
+      FieldsBad{}
+    case False{}:
+      fields_put.kv(m, split_colon(line))
+
+def fields_put.empty(m: Map<&2, String>, +line: String, e: Bool) -> Fields:
+  match e:
+    case True{}:
+      FieldsOk{m}
+    case False{}:
+      fields_put.fold(m, line, folded(line))
+
+def fields_put.ok(m: Map<&2, String>, +line: String) -> Fields:
+  fields_put.empty(m, line, String.is_empty(line))
+
+def fields_put(acc: Fields, line: String) -> Fields:
+  match acc:
+    case FieldsBad{}:
+      FieldsBad{}
+    case FieldsOk{m}:
+      fields_put.ok(m, line)
+
+def parse.headers.done(acc: Fields) -> Maybe<&2, Map<&2, String>>:
+  match acc:
+    case FieldsBad{}:
+      None{}
+    case FieldsOk{m}:
+      Some{m}
+
+def parse.headers(xs: List<&2, String>, acc: Fields) -> Maybe<&2, Map<&2, String>>:
   match xs:
     case Nil{}:
-      m
+      parse.headers.done(acc)
     case Con{line, rest}:
-      parse.headers(rest, header_put(m, drop_cr(line)))
+      parse.headers(rest, fields_put(acc, drop_cr(line)))
 
-def clash.and(cl: Bool, r: Map<&2, String> & Bool) -> Bool:
-  (h, te) = r
-  Bool.and(cl, te)
+def parse_u32.digit(+c: U32) -> Bool:
+  Bool.and(U32.is_le(48, c), U32.is_le(c, 57))
 
-def clash.te(r: Map<&2, String> & Bool) -> Bool:
-  (h, cl) = r
-  clash.and(cl, Map.has(&2, String, h, "transfer-encoding"))
+def parse_u32.add(acc: U32, c: U32) -> U32:
+  (acc * 10 + (c - 48 : U32) : U32)
 
-def clash(+h: Map<&2, String>) -> Bool:
-  clash.te(Map.has(&2, String, h, "content-length"))
-
-def parse.clash(method: String, path: String, h: Map<&2, String>, b: String, bad: Bool) -> Maybe<&2, Req>:
+def parse_u32.done(acc: U32, bad: Bool) -> Maybe<&2, U32>:
   match bad:
     case True{}:
       None{}
     case False{}:
+      Some{acc}
+
+def parse_u32.go(s: String, acc: U32, bad: Bool) -> Maybe<&2, U32>:
+  match s:
+    case SNil{}:
+      parse_u32.done(acc, bad)
+    case SCon{Chr{+c}, t}:
+      parse_u32.go(t, parse_u32.add(acc, c), Bool.or(bad, Bool.not(parse_u32.digit(c))))
+
+def parse_u32(s: String) -> Maybe<&2, U32>:
+  match s:
+    case SNil{}:
+      None{}
+    case SCon{Chr{+c}, t}:
+      parse_u32.go(t, parse_u32.add(0, c), Bool.not(parse_u32.digit(c)))
+
+
+
+def parse.take(rest: String, n: Maybe<&2, U32>) -> Maybe<&2, String>:
+  match n:
+    case None{}:
+      None{}
+    case Some{k}:
+      Some{String.take(rest, U32.to_nat(k))}
+
+def parse.body.cl(+h: Map<&2, String>, rest: String, hascl: Bool) -> Maybe<&2, String>:
+  match hascl:
+    case False{}:
+      Some{""}
+    case True{}:
+      parse.take(rest, parse_u32(header(h, "content-length")))
+
+def parse.body.te(+h: Map<&2, String>, rest: String, te: Bool) -> Maybe<&2, String>:
+  match te:
+    case True{}:
+      None{}
+    case False{}:
+      parse.body.cl(h, rest, has_header(h, "content-length"))
+
+def parse.body(+h: Map<&2, String>, rest: String) -> Maybe<&2, String>:
+  parse.body.te(h, rest, has_header(h, "transfer-encoding"))
+
+def parse.finish(method: String, path: String, h: Map<&2, String>, body: Maybe<&2, String>) -> Maybe<&2, Req>:
+  match body:
+    case None{}:
+      None{}
+    case Some{b}:
       Some{Req{method, path, h, b}}
 
-def parse.done(method: String, path: String, +h: Map<&2, String>, b: String) -> Maybe<&2, Req>:
-  parse.clash(method, path, h, b, clash(h))
+def parse.host(method: String, path: String, +h: Map<&2, String>, rest: String, has: Bool) -> Maybe<&2, Req>:
+  match has:
+    case False{}:
+      None{}
+    case True{}:
+      parse.finish(method, path, h, parse.body(h, rest))
 
-def parse.rest(mp: String & String, rest: List<&2, String>, b: String) -> Maybe<&2, Req>:
-  (method, path) = mp
-  parse.done(method, path, parse.headers(rest, empty()), b)
+def parse.fields(method: String, path: String, rest: String, fs: Maybe<&2, Map<&2, String>>) -> Maybe<&2, Req>:
+  match fs:
+    case None{}:
+      None{}
+    case Some{+h}:
+      parse.host(method, path, h, rest, has_header(h, "host"))
 
-def parse.lines(xs: List<&2, String>, b: String) -> Maybe<&2, Req>:
+def target_ok(+p: String) -> Bool:
+  Bool.or(String.starts_with(p, "/"), Bool.or(String.eq(p, "*"), String.starts_with(p, "http://")))
+
+def parse.target(method: String, +path: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Req>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      parse.fields(method, path, rest, parse.headers(headers, FieldsOk{empty()}))
+
+def parse.ver(method: String, +path: String, v: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Req>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      parse.target(method, path, headers, rest, target_ok(path))
+
+def parse.empty_method(method: String, path: String, +v: String, headers: List<&2, String>, rest: String, empty: Bool) -> Maybe<&2, Req>:
+  match empty:
+    case True{}:
+      None{}
+    case False{}:
+      parse.ver(method, path, v, headers, rest, String.eq(v, "HTTP/1.1"))
+
+def parse.start3(mpv: String & String & String, headers: List<&2, String>, rest: String) -> Maybe<&2, Req>:
+  (+method, path, v) = mpv
+  parse.empty_method(method, path, v, headers, rest, String.is_empty(method))
+
+def parse.lines(xs: List<&2, String>, rest: String) -> Maybe<&2, Req>:
   match xs:
     case Nil{}:
       None{}
-    case Con{line, rest}:
-      parse.rest(req_line(drop_cr(line)), rest, b)
+    case Con{line, headers}:
+      parse.start3(start_line(line), headers, rest)
 
-def parse.head(head: String, b: String) -> Maybe<&2, Req>:
-  parse.lines(String.lines(head), b)
+def parse.head(head: String, rest: String) -> Maybe<&2, Req>:
+  parse.lines(String.lines(head), rest)
 
 def parse.of(hb: String & String) -> Maybe<&2, Req>:
-  (head, b) = hb
-  parse.head(head, b)
+  (head, rest) = hb
+  parse.head(head, rest)
 
 def parse(raw: String) -> Maybe<&2, Req>:
   parse.of(split_at_blank(raw))
+
+def got_body.req(req: Req) -> String:
+  Req{method, path, headers, body} = req
+  body
+
+def got_body(m: Maybe<&2, Req>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{req}:
+      got_body.req(req)
 
 def body.of(hb: String & String) -> String:
   (h, b) = hb
@@ -163,9 +309,16 @@ def headers_block(h: Map<&2, String>) -> String:
 def response(status: U32, headers: Map<&2, String>, body: String) -> String:
   ("HTTP/1.1 " ++ U32.show(status) ++ " OK" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
 
+def nat_u32(n: Nat) -> U32:
+  match n:
+    case 0n:
+      0
+    case 1n+p:
+      (nat_u32(p) + 1 : U32)
+
 def encode(r: Res) -> String:
-  Res{status, headers, body} = r
-  response(status, headers, body)
+  Res{status, headers, +body} = r
+  response(status, Map.set(&2, String, headers, "content-length", U32.show(nat_u32(String.length(body)))), body)
 
 def get_req(host: String, path: String) -> String:
   "GET " ++ path ++ " HTTP/1.1\r\nHost: " ++ host ++ "\r\nConnection: close\r\n\r\n"

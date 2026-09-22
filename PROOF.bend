@@ -55,6 +55,20 @@ def Laws.sanitize_drop_cr(s):
 def Laws.sanitize_drop_lf(s):
   {==}
 
+def Laws.http11_needs_host(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.parse_zero_body(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
 def Laws.cl_te_rejects(b):
   match b:
     case SNil{}:

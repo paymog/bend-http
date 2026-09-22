@@ -4,7 +4,7 @@ import ./http.bend as Http
 def show_req(req: Http.Req) -> IO(Unit):
   Http.Req{method, path, headers, body} = req
   do IO<Unit>:
-    IO.print(method ++ " " ++ path ++ " " ++ body)
+    IO.print(method ++ " " ++ path ++ " [" ++ body ++ "]")
     IO.print(Http.encode(Http.Res{200, Http.empty(), "ok"}))
 
 def show(m: Maybe<&2, Http.Req>) -> IO(Unit):
@@ -17,5 +17,7 @@ def show(m: Maybe<&2, Http.Req>) -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     show(Http.parse("GET /x HTTP/1.1\r\n\r\nhello"))
-    show(Http.parse("GET / HTTP/1.1\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n"))
+    show(Http.parse("GET /x HTTP/1.1\r\nHost: x\r\n\r\nhello"))
+    show(Http.parse("GET /x HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello"))
+    show(Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n"))
     IO.print(Http.sanitize("a\rb\nc"))
