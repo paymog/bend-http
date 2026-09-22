@@ -85,7 +85,7 @@ def body(s: String) -> String:
   body.of(split_at_blank(s))
 
 def response(status: U32, body: String) -> String:
-  "HTTP/1.1 " ++ U32.show(status) ++ " OK\r\nContent-Type: text/plain\r\nConnection: close\r\n\r\n" ++ body
+  ("HTTP/1.1 " ++ U32.show(status) ++ " OK\r\nContent-Type: text/plain\r\nConnection: close") ++ ("\r\n\r\n" ++ body)
 
 def encode(r: Res) -> String:
   Res{status, body} = r
