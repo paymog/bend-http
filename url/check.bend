@@ -12,4 +12,5 @@ def main() -> IO(Unit):
   do IO<Unit>:
     show(Url.parse("/"))
     show(Url.parse("/x?a=1&b=2"))
+    show(Url.parse("/a%20b"))
     show(Url.parse("nope"))

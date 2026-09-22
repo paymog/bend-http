@@ -10,3 +10,9 @@ def Laws.path_root():
 
 def Laws.encode_root():
   {==}
+
+def Laws.pct_space():
+  {==}
+
+def Laws.pct_keep_a():
+  {==}
