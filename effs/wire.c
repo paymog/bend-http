@@ -148,7 +148,7 @@ static Term wire_send_to_more(Env e, IoWork* w) {
   int     fd = (int)w->hand;
   ssize_t n  = -1;
   errno      = EINVAL;
-  if (w->code == 0 && io_sys_addr(w->text, (u32)w->word, &at) == 0) {
+  if (w->code == 0 && io_sys_addr(w->text, (u32)w->made, &at) == 0) {
     n = sendto(fd, w->data, w->size, 0, (struct sockaddr*)&at, sizeof(at));
   }
   io_sys_end(w, n);
@@ -167,7 +167,7 @@ Term wire_send_to_run(Env e, Term* f, IoWork* w) {
   bool     bad;
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->text = io_cstr(e, f[1], &hn);
-  w->word = (u32)f[2];
+  w->made = (intptr_t)f[2];
   w->data = wire_octets(e, f[3], &w->size, &bad);
   w->code = bad || io_nul(w->text, hn) ? EINVAL : 0;
   return wire_send_to_more(e, w);
@@ -175,6 +175,268 @@ Term wire_send_to_run(Env e, Term* f, IoWork* w) {
 
 static void __attribute__((constructor)) wire_send_to_use(void) {
   io_eff(CID_SEND_TO, wire_send_to_run, 0);
+}
+
+#endif
+
+// TLS
+// ===
+// OpenSSL 3, loaded at run time (bend links no extra libraries). The SSL
+// object of a socket lives in a table keyed by its fd. Peer verification
+// (chain + host name) is always on; TLS 1.2 is the floor.
+
+#if defined(CID_TLS_CONNECT) || defined(CID_TLS_SEND) || defined(CID_TLS_RECV) || defined(CID_TLS_CLOSE)
+#ifndef WIRE_TLS
+#define WIRE_TLS
+#include <dlfcn.h>
+
+typedef struct {
+  int   state;
+  void* ctx;
+  void* (*ssl_new)(void*);
+  int   (*set_fd)(void*, int);
+  long  (*ctrl)(void*, int, long, void*);
+  int   (*set1_host)(void*, const char*);
+  int   (*connect)(void*);
+  int   (*read)(void*, void*, int);
+  int   (*write)(void*, const void*, int);
+  int   (*get_error)(const void*, int);
+  int   (*shutdown)(void*);
+  void  (*ssl_free)(void*);
+  long  (*verify_result)(const void*);
+  const char* (*verify_text)(long);
+} WireTls;
+
+#define WIRE_TLS_FDS 65536
+static WireTls wire_tls;
+static void*   wire_tls_ssl[WIRE_TLS_FDS];
+
+static void* wire_tls_open(void) {
+  const char* paths[] = { getenv("BEND_LIBSSL"),
+    "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
+    "/usr/local/opt/openssl@3/lib/libssl.3.dylib", "libssl.3.dylib", "libssl.so.3" };
+  for (u64 i = 0; i < sizeof(paths) / sizeof(paths[0]); i += 1) {
+    void* h = paths[i] != NULL ? dlopen(paths[i], RTLD_NOW | RTLD_LOCAL) : NULL;
+    if (h != NULL) {
+      return h;
+    }
+  }
+  return NULL;
+}
+
+static bool wire_tls_load(void) {
+  if (wire_tls.state != 0) {
+    return wire_tls.state > 0;
+  }
+  wire_tls.state = -1;
+  void* h = wire_tls_open();
+  if (h == NULL) {
+    return false;
+  }
+  void* (*method)(void)                 = dlsym(h, "TLS_client_method");
+  void* (*ctx_new)(void*)               = dlsym(h, "SSL_CTX_new");
+  int   (*paths)(void*)                 = dlsym(h, "SSL_CTX_set_default_verify_paths");
+  void  (*verify)(void*, int, void*)    = dlsym(h, "SSL_CTX_set_verify");
+  long  (*ctx_ctrl)(void*, int, long, void*) = dlsym(h, "SSL_CTX_ctrl");
+  uint64_t (*options)(void*, uint64_t)  = dlsym(h, "SSL_CTX_set_options");
+  wire_tls.ssl_new       = dlsym(h, "SSL_new");
+  wire_tls.set_fd        = dlsym(h, "SSL_set_fd");
+  wire_tls.ctrl          = dlsym(h, "SSL_ctrl");
+  wire_tls.set1_host     = dlsym(h, "SSL_set1_host");
+  wire_tls.connect       = dlsym(h, "SSL_connect");
+  wire_tls.read          = dlsym(h, "SSL_read");
+  wire_tls.write         = dlsym(h, "SSL_write");
+  wire_tls.get_error     = dlsym(h, "SSL_get_error");
+  wire_tls.shutdown      = dlsym(h, "SSL_shutdown");
+  wire_tls.ssl_free      = dlsym(h, "SSL_free");
+  wire_tls.verify_result = dlsym(h, "SSL_get_verify_result");
+  wire_tls.verify_text   = dlsym(h, "X509_verify_cert_error_string");
+  if (!method || !ctx_new || !paths || !verify || !ctx_ctrl || !options
+    || !wire_tls.ssl_new || !wire_tls.set_fd || !wire_tls.ctrl
+    || !wire_tls.set1_host || !wire_tls.connect || !wire_tls.read
+    || !wire_tls.write || !wire_tls.get_error || !wire_tls.shutdown
+    || !wire_tls.ssl_free || !wire_tls.verify_result || !wire_tls.verify_text) {
+    return false;
+  }
+  void* ctx = ctx_new(method());
+  if (ctx == NULL || paths(ctx) != 1) {
+    return false;
+  }
+  verify(ctx, 1, NULL);              // SSL_VERIFY_PEER
+  ctx_ctrl(ctx, 123, 0x0303, NULL);  // SSL_CTRL_SET_MIN_PROTO_VERSION, TLS 1.2
+  options(ctx, 1ull << 7);           // SSL_OP_IGNORE_UNEXPECTED_EOF: a bare EOF reads as close
+  wire_tls.ctx   = ctx;
+  wire_tls.state = 1;
+  return true;
+}
+
+static void* wire_tls_of(int fd) {
+  return fd >= 0 && fd < WIRE_TLS_FDS ? wire_tls_ssl[fd] : NULL;
+}
+
+static void wire_tls_drop(int fd) {
+  void* ssl = wire_tls_of(fd);
+  if (ssl != NULL) {
+    wire_tls.ssl_free(ssl);
+    wire_tls_ssl[fd] = NULL;
+  }
+}
+
+#endif
+#endif
+
+#ifdef CID_TLS_CONNECT
+
+static Term wire_tls_connect_end(Env e, IoWork* w, Term r) {
+  free(w->text);
+  return io_tup(e, io_hand(w->hand), r);
+}
+
+static Term wire_tls_connect_fail(Env e, IoWork* w, u32 code, const char* why) {
+  wire_tls_drop((int)w->hand);
+  return wire_tls_connect_end(e, w, io_fail(e, code, why));
+}
+
+static Term wire_tls_connect_more(Env e, IoWork* w) {
+  int   fd  = (int)w->hand;
+  void* ssl = wire_tls_of(fd);
+  int   r   = wire_tls.connect(ssl);
+  if (r == 1) {
+    return wire_tls_connect_end(e, w, io_done(e, term_pak(CID_UNIT, 0)));
+  }
+  int err = wire_tls.get_error(ssl, r);
+  if (err == 2 || err == 3) {  // SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
+    return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, 0, wire_tls_connect_more);
+  }
+  long v = wire_tls.verify_result(ssl);
+  return wire_tls_connect_fail(e, w, EPROTO, v != 0 ? wire_tls.verify_text(v) : "TLS handshake failed");
+}
+
+Term tls_connect_run(Env e, Term* f, IoWork* w) {
+  uint64_t hn = 0;
+  w->hand = (intptr_t)io_hand_v(f[0]);
+  w->text = io_cstr(e, f[1], &hn);
+  int fd  = (int)w->hand;
+  if (!wire_tls_load()) {
+    return wire_tls_connect_end(e, w, io_fail(e, ENOENT, "TLS needs OpenSSL 3 (libssl.3); set BEND_LIBSSL to its path"));
+  }
+  if (fd < 0 || fd >= WIRE_TLS_FDS || io_nul(w->text, hn)) {
+    return wire_tls_connect_end(e, w, io_fail(e, EINVAL, NULL));
+  }
+  void* ssl = wire_tls.ssl_new(wire_tls.ctx);
+  if (ssl == NULL) {
+    return wire_tls_connect_end(e, w, io_fail(e, ENOMEM, NULL));
+  }
+  wire_tls_ssl[fd] = ssl;
+  // SNI (SSL_CTRL_SET_TLSEXT_HOSTNAME, host_name) and host name verification.
+  if (wire_tls.set_fd(ssl, fd) != 1 || wire_tls.ctrl(ssl, 55, 0, w->text) != 1
+    || wire_tls.set1_host(ssl, w->text) != 1) {
+    return wire_tls_connect_fail(e, w, EPROTO, "TLS setup failed");
+  }
+  return wire_tls_connect_more(e, w);
+}
+
+static void __attribute__((constructor)) tls_connect_use(void) {
+  io_eff(CID_TLS_CONNECT, tls_connect_run, 0);
+}
+
+#endif
+
+#ifdef CID_TLS_SEND
+
+// SSL_write is retried with the same buffer, as OpenSSL requires.
+static Term wire_tls_send_more(Env e, IoWork* w) {
+  int   fd  = (int)w->hand;
+  void* ssl = wire_tls_of(fd);
+  while (w->code == 0 && (u64)w->made < w->size) {
+    if (ssl == NULL) {
+      w->code = EBADF;
+      break;
+    }
+    u64 left = w->size - (u64)w->made;
+    int n    = wire_tls.write(ssl, w->data + w->made, left > INT32_MAX ? INT32_MAX : (int)left);
+    if (n > 0) {
+      w->made += n;
+      continue;
+    }
+    int err = wire_tls.get_error(ssl, n);
+    if (err == 2 || err == 3) {
+      return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, 0, wire_tls_send_more);
+    }
+    w->code = EPIPE;
+  }
+  Term r = w->code != 0 ? io_fail(e, w->code, NULL)
+    : io_done(e, term_pak(CID_UNIT, 0));
+  free(w->data);
+  return io_tup(e, io_hand(w->hand), r);
+}
+
+Term tls_send_run(Env e, Term* f, IoWork* w) {
+  bool bad;
+  w->hand = (intptr_t)io_hand_v(f[0]);
+  w->data = wire_octets(e, f[1], &w->size, &bad);
+  w->made = 0;
+  w->code = bad ? EINVAL : 0;
+  return wire_tls_send_more(e, w);
+}
+
+static void __attribute__((constructor)) tls_send_use(void) {
+  io_eff(CID_TLS_SEND, tls_send_run, 0);
+}
+
+#endif
+
+#ifdef CID_TLS_RECV
+
+// "" means the peer closed (close_notify, or a bare EOF).
+static Term wire_tls_recv_more(Env e, IoWork* w) {
+  int   fd  = (int)w->hand;
+  void* ssl = wire_tls_of(fd);
+  int   n   = ssl != NULL ? wire_tls.read(ssl, w->data, (int)w->made) : -1;
+  Term  r;
+  if (n > 0) {
+    r = io_done(e, wire_bytes(e, w->data, (u64)n));
+  } else {
+    int err = ssl != NULL ? wire_tls.get_error(ssl, n) : 1;
+    if (err == 2 || err == 3) {
+      return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, 0, wire_tls_recv_more);
+    }
+    r = err == 6 ? io_done(e, term_pak(CID_SNIL, 0))  // SSL_ERROR_ZERO_RETURN
+      : io_fail(e, ssl != NULL ? EIO : EBADF, ssl != NULL ? "TLS read failed" : NULL);
+  }
+  free(w->data);
+  return io_tup(e, io_hand(w->hand), r);
+}
+
+Term tls_recv_run(Env e, Term* f, IoWork* w) {
+  w->hand = (intptr_t)io_hand_v(f[0]);
+  w->made = f[1] < INT32_MAX ? (intptr_t)f[1] : INT32_MAX;
+  w->data = io_mem(malloc((size_t)w->made + 1));
+  return wire_tls_recv_more(e, w);
+}
+
+static void __attribute__((constructor)) tls_recv_use(void) {
+  io_eff(CID_TLS_RECV, tls_recv_run, IO_READ);
+}
+
+#endif
+
+#ifdef CID_TLS_CLOSE
+
+// ponytail: one non-blocking close_notify attempt; no wait for the peer's
+Term tls_close_run(Env e, Term* f, IoWork* w) {
+  int   fd  = (int)io_hand_v(f[0]);
+  void* ssl = wire_tls_of(fd);
+  if (ssl != NULL) {
+    wire_tls.shutdown(ssl);
+    wire_tls_drop(fd);
+  }
+  close(fd);
+  return term_pak(CID_UNIT, 0);
+}
+
+static void __attribute__((constructor)) tls_close_use(void) {
+  io_eff(CID_TLS_CLOSE, tls_close_run, 0);
 }
 
 #endif

@@ -124,3 +124,163 @@ function send_to(socket, host, port, data, k) {
   };
   return go();
 }
+
+// TLS
+// ===
+// Twins of the TLS effects in wire.c: OpenSSL 3 through bun:ffi, the SSL
+// object per fd in a Map, peer verification always on, TLS 1.2 floor.
+
+function wire_tls() {
+  if (globalThis.BEND_TLS !== undefined) {
+    return globalThis.BEND_TLS;
+  }
+  globalThis.BEND_TLS = null;
+  const ffi = require("bun:ffi");
+  const paths = [process.env.BEND_LIBSSL,
+    "/opt/homebrew/opt/openssl@3/lib/libssl.3.dylib",
+    "/usr/local/opt/openssl@3/lib/libssl.3.dylib", "libssl.3.dylib", "libssl.so.3"];
+  const T = { i: "i32", l: "i64", U: "u64", p: "ptr", c: "cstring", v: "void" };
+  const syms = Object.fromEntries(("TLS_client_method:>p SSL_CTX_new:p>p"
+    + " SSL_CTX_set_default_verify_paths:p>i SSL_CTX_set_verify:pip>v"
+    + " SSL_CTX_ctrl:pilp>l SSL_CTX_set_options:pU>U SSL_new:p>p SSL_set_fd:pi>i"
+    + " SSL_ctrl:pilp>l SSL_set1_host:pp>i SSL_connect:p>i SSL_read:ppi>i"
+    + " SSL_write:ppi>i SSL_get_error:pi>i SSL_shutdown:p>i SSL_free:p>v"
+    + " SSL_get_verify_result:p>l X509_verify_cert_error_string:l>c").split(" ").map((s) => {
+    const [name, args, ret] = s.split(/[:>]/);
+    return [name, { args: [...args].map((a) => T[a]), returns: T[ret] }];
+  }));
+  for (const p of paths) {
+    if (!p) {
+      continue;
+    }
+    try {
+      const s = ffi.dlopen(p, syms).symbols;
+      const ctx = s.SSL_CTX_new(s.TLS_client_method());
+      if (!ctx || s.SSL_CTX_set_default_verify_paths(ctx) !== 1) {
+        return null;
+      }
+      s.SSL_CTX_set_verify(ctx, 1, null);
+      s.SSL_CTX_ctrl(ctx, 123, 0x0303n, null);
+      s.SSL_CTX_set_options(ctx, 1n << 7n);
+      globalThis.BEND_TLS = { s, ctx, ffi, by: new Map() };
+      return globalThis.BEND_TLS;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+function wire_cstr(t, text) {
+  const b = Buffer.from(text + "\0", "utf8");
+  return { b, p: t.ffi.ptr(b) };
+}
+
+function tls_connect(socket, host, k) {
+  const t = wire_tls();
+  if (t === null) {
+    return io_tup(socket, { $: "Fail", error: io_tup(2,
+      "TLS needs OpenSSL 3 (libssl.3); set BEND_LIBSSL to its path") });
+  }
+  const s = t.s;
+  const fd = socket;
+  const ssl = s.SSL_new(t.ctx);
+  if (!ssl) {
+    return io_tup(socket, io_fail(12));
+  }
+  t.by.set(fd, ssl);
+  const name = wire_cstr(t, host);
+  const fail = (why) => {
+    s.SSL_free(ssl);
+    t.by.delete(fd);
+    return io_tup(socket, { $: "Fail", error: io_tup(100, why) });
+  };
+  if (s.SSL_set_fd(ssl, fd) !== 1 || Number(s.SSL_ctrl(ssl, 55, 0n, name.p)) !== 1
+    || s.SSL_set1_host(ssl, name.p) !== 1) {
+    return fail("TLS setup failed");
+  }
+  const go = () => {
+    const r = s.SSL_connect(ssl);
+    if (r === 1) {
+      return io_tup(socket, io_done({ $: "Unit" }));
+    }
+    const err = s.SSL_get_error(ssl, r);
+    if (err === 2 || err === 3) {
+      io_park_on(fd, err === 3, k, go);
+      return undefined;
+    }
+    const v = s.SSL_get_verify_result(ssl);
+    return fail(v !== 0n ? String(s.X509_verify_cert_error_string(v)) : "TLS handshake failed");
+  };
+  return go();
+}
+
+function tls_send(socket, data, k) {
+  const t = wire_tls();
+  const ssl = t && t.by.get(socket);
+  const b = wire_octets(data);
+  if (!ssl) {
+    return io_tup(socket, io_fail(9));
+  }
+  if (b === null) {
+    return io_tup(socket, io_fail(22));
+  }
+  const go = (at) => {
+    while (at < b.length) {
+      const n = t.s.SSL_write(ssl, t.ffi.ptr(b, at), b.length - at);
+      if (n > 0) {
+        at += n;
+        continue;
+      }
+      const err = t.s.SSL_get_error(ssl, n);
+      if (err === 2 || err === 3) {
+        io_park_on(socket, err === 3, k, () => go(at));
+        return undefined;
+      }
+      return io_tup(socket, io_fail(32));
+    }
+    return io_tup(socket, io_done({ $: "Unit" }));
+  };
+  return go(0);
+}
+
+function tls_recv(socket, max, k) {
+  const t = wire_tls();
+  const ssl = t && t.by.get(socket);
+  if (!ssl) {
+    return io_tup(socket, io_fail(9));
+  }
+  const b = new Uint8Array(Math.max(Number(max), 1));
+  const go = () => {
+    const n = t.s.SSL_read(ssl, t.ffi.ptr(b), b.length);
+    if (n > 0) {
+      return io_tup(socket, io_done(wire_text(b, n)));
+    }
+    const err = t.s.SSL_get_error(ssl, n);
+    if (err === 2 || err === 3) {
+      io_park_on(socket, err === 3, k, go);
+      return undefined;
+    }
+    if (err === 6) {
+      return io_tup(socket, io_done(""));
+    }
+    return io_tup(socket, { $: "Fail", error: io_tup(5, "TLS read failed") });
+  };
+  return go();
+}
+
+function tls_recv_need() {
+  return { read: true };
+}
+
+function tls_close(socket) {
+  const t = wire_tls();
+  const ssl = t && t.by.get(socket);
+  if (ssl) {
+    t.s.SSL_shutdown(ssl);
+    t.s.SSL_free(ssl);
+    t.by.delete(socket);
+  }
+  io_sys().close(socket);
+  return { $: "Unit" };
+}

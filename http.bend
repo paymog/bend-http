@@ -3,7 +3,7 @@ import ./wire.bend as Wire
 import ./dns/dns.bend as Dns
 import ./url/url.bend as Url
 
-# HTTP/1.1 codec and client (RFC 9112). http:// only until TLS lands.
+# HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
 # Bodies are byte strings: one Char per octet, so lengths are exact.
 # fetch reads until frame() says the response is whole. Build with -o for big bodies:
@@ -240,13 +240,28 @@ def chunk.lf(t: String, n: U32) -> Maybe<&2, HexSize>:
     case SCon{Chr{c}, r}:
       chunk.lf1(r, n, U32.is_eq(c, 10))
 
-# RFC 9112 §7.1.1: recipients ignore unknown chunk extensions.
-def chunk.ext(s: String, +n: U32) -> Maybe<&2, HexSize>:
+# Bool.pick evaluates both arms, so a loop that recursed inside it would scan
+# the whole body at every byte. These loops classify the next char into a
+# Bool param and recurse only in the arm that matches.
+
+def chunk.ext.go(t: String, +c: U32, +n: U32, stop: Bool) -> Maybe<&2, HexSize>:
+  match t:
+    case SNil{}:
+      None{}
+    case SCon{Chr{+d}, u}:
+      match stop:
+        case True{}:
+          chunk.lf1(u, n, Bool.and(U32.is_eq(c, 13), U32.is_eq(d, 10)))
+        case False{}:
+          chunk.ext.go(u, d, n, Bool.or(U32.is_eq(d, 13), U32.is_eq(d, 10)))
+
+# RFC 9112 §7.1.1: recipients ignore unknown chunk extensions; a bare LF is not CRLF.
+def chunk.ext(s: String, n: U32) -> Maybe<&2, HexSize>:
   match s:
     case SNil{}:
       None{}
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 13), chunk.lf(t, n), Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 10), None{}, chunk.ext(t, n)))
+    case SCon{Chr{+c}, t}:
+      chunk.ext.go(t, c, n, Bool.or(U32.is_eq(c, 13), U32.is_eq(c, 10)))
 
 def chunk.size.end(+c: U32, +t: String, +n: U32, seen: Bool) -> Maybe<&2, HexSize>:
   match seen:
@@ -255,15 +270,28 @@ def chunk.size.end(+c: U32, +t: String, +n: U32, seen: Bool) -> Maybe<&2, HexSiz
     case True{}:
       Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 13), chunk.lf(t, n), Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 59), chunk.ext(t, n), None{}))
 
-def chunk.size.go(s: String, +acc: U32, +seen: Bool) -> Maybe<&2, HexSize>:
+# A size that would overflow 32 bits ends the digits, and size.end then refuses it.
+def chunk.digit(+c: U32, +acc: U32) -> Bool:
+  Bool.and(is_hex(c), U32.is_le(acc, 268435455))
+
+def chunk.size.go(t: String, +c: U32, +acc: U32, seen: Bool, digit: Bool) -> Maybe<&2, HexSize>:
+  match t:
+    case SNil{}:
+      None{}
+    case SCon{Chr{+d}, u}:
+      match digit:
+        case False{}:
+          chunk.size.end(c, SCon{Chr{d}, u}, acc, seen)
+        case True{}:
+          +acc2 = (acc * 16 + hexv(c) : U32)
+          chunk.size.go(u, d, acc2, True{}, chunk.digit(d, acc2))
+
+def chunk.size(s: String) -> Maybe<&2, HexSize>:
   match s:
     case SNil{}:
       None{}
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(Maybe<&2, HexSize>, is_hex(c), Bool.pick(Maybe<&2, HexSize>, U32.is_le(acc, 268435455), chunk.size.go(t, (acc * 16 + hexv(c) : U32), True{}), None{}), chunk.size.end(c, t, acc, seen))
-
-def chunk.size(s: String) -> Maybe<&2, HexSize>:
-  chunk.size.go(s, 0, False{})
+    case SCon{Chr{+c}, t}:
+      chunk.size.go(t, c, 0, False{}, chunk.digit(c, 0))
 
 def chunk.trailer.ok(acc: String, ok: Bool) -> Step:
   match ok:
@@ -647,9 +675,31 @@ def encode_req(+method: String, target: String, host: String, headers: Map<&2, S
   +h = Map.set(&2, String, Map.set(&2, String, req.put(Map.to_list(&2, String, headers), empty()), "host", host), "connection", "close")
   request(method, target, req.cl(h, method, body), body)
 
-def fetch.close(s: Socket, r: Maybe<&2, Res>) -> IO(Maybe<&2, Res>):
+# Transport: plain TCP or TLS over the same socket.
+def io.recv(tls: Bool, s: Socket, max: U32) -> IO(Socket & Result<&1, &1, U32 & String, String>):
+  match tls:
+    case True{}:
+      Wire.tls.recv(s, max)
+    case False{}:
+      Wire.recv(s, max)
+
+def io.send(tls: Bool, s: Socket, data: String) -> IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  match tls:
+    case True{}:
+      Wire.tls.send(s, data)
+    case False{}:
+      Wire.send(s, data)
+
+def io.close(tls: Bool, s: Socket) -> IO(Unit):
+  match tls:
+    case True{}:
+      Wire.tls.close(s)
+    case False{}:
+      Socket.close(s)
+
+def fetch.close(tls: Bool, s: Socket, r: Maybe<&2, Res>) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
-    Socket.close(s)
+    io.close(tls, s)
     return r
 
 def fetch.none() -> IO(Maybe<&2, Res>):
@@ -682,61 +732,84 @@ def fetch.next(head: Bool, buf: String, m: Socket & Result<&1, &1, U32 & String,
 
 # Reads until frame says Done or Bad; an empty recv means the server closed.
 @unsafe
-def fetch.read(+head: Bool, st: Socket & String & Frame) -> IO(Maybe<&2, Res>):
+def fetch.read(+head: Bool, +tls: Bool, st: Socket & String & Frame) -> IO(Maybe<&2, Res>):
   (s, buf, f) = st
   match f:
     case FrameMore{}:
       do IO<Maybe<&2, Res>>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 65536)
-        fetch.read(head, fetch.next(head, buf, m))
+        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536)
+        fetch.read(head, tls, fetch.next(head, buf, m))
     case FrameBad{}:
-      fetch.close(s, None{})
+      fetch.close(tls, s, None{})
     case FrameDone{res}:
-      fetch.close(s, Some{res})
+      fetch.close(tls, s, Some{res})
 
-def fetch.sent(head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+def fetch.sent(head: Bool, tls: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
   match r:
     case Fail{e}:
-      fetch.close(s, None{})
+      fetch.close(tls, s, None{})
     case Done{u}:
-      fetch.read(head, (s, "", FrameMore{}))
+      fetch.read(head, tls, (s, "", FrameMore{}))
 
-def fetch.conn(head: Bool, wire: String, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, Res>):
+def fetch.send(head: Bool, +tls: Bool, s: Socket, wire: String) -> IO(Maybe<&2, Res>):
+  do IO<Maybe<&2, Res>>:
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
+    fetch.sent(head, tls, sent)
+
+# A failed handshake (bad chain, wrong host, no OpenSSL) is None, never plaintext.
+def fetch.shook(head: Bool, wire: String, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+  (s, r) = m
+  match r:
+    case Fail{e}:
+      fetch.close(True{}, s, None{})
+    case Done{u}:
+      fetch.send(head, True{}, s, wire)
+
+def fetch.secure(head: Bool, sni: String, wire: String, c: Socket, tls: Bool) -> IO(Maybe<&2, Res>):
+  match tls:
+    case False{}:
+      fetch.send(head, False{}, c, wire)
+    case True{}:
+      do IO<Maybe<&2, Res>>:
+        hs : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.tls.connect(c, sni)
+        fetch.shook(head, wire, hs)
+
+def fetch.conn(head: Bool, sni: String, wire: String, tls: Bool, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, Res>):
   match r:
     case Fail{e}:
       fetch.none()
     case Done{c}:
-      do IO<Maybe<&2, Res>>:
-        sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(c, wire)
-        fetch.sent(head, sent)
+      fetch.secure(head, sni, wire, c, tls)
 
 # One request on one connection to an IPv4 address. Bodies are byte strings.
-def fetch.ip(+method: String, ip: String, port: U32, host: String, target: String, headers: Map<&2, String>, body: String) -> IO(Maybe<&2, Res>):
+def fetch.ip(+method: String, ip: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
     c : Result<&1, &1, U32 & String, Socket> <- TCP.connect(ip, port)
-    fetch.conn(String.eq(method, "HEAD"), encode_req(method, target, host, headers, body), c)
+    fetch.conn(String.eq(method, "HEAD"), sni, encode_req(method, target, hf, headers, body), tls, c)
 
-def fetch.addr(method: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, ip: Maybe<&2, String>) -> IO(Maybe<&2, Res>):
+def fetch.addr(method: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool, ip: Maybe<&2, String>) -> IO(Maybe<&2, Res>):
   match ip:
     case None{}:
       fetch.none()
     case Some{addr}:
-      fetch.ip(method, addr, port, hf, target, headers, body)
+      fetch.ip(method, addr, port, sni, hf, target, headers, body, tls)
 
-# ponytail: http only; https lands with TLS
-def fetch.http(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, http: Bool) -> IO(Maybe<&2, Res>):
-  match http:
+def fetch.dns(method: String, +host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool) -> IO(Maybe<&2, Res>):
+  do IO<Maybe<&2, Res>>:
+    ip : Maybe<&2, String> <- Dns.resolve(host)
+    fetch.addr(method, port, host, hf, target, headers, body, tls, ip)
+
+def fetch.scheme(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, +scheme: String, known: Bool) -> IO(Maybe<&2, Res>):
+  match known:
     case False{}:
       fetch.none()
     case True{}:
-      do IO<Maybe<&2, Res>>:
-        ip : Maybe<&2, String> <- Dns.resolve(host)
-        fetch.addr(method, port, hf, target, headers, body, ip)
+      fetch.dns(method, host, port, hf, target, headers, body, String.eq(scheme, "https"))
 
 def fetch.abs(method: String, headers: Map<&2, String>, body: String, hf: String, a: Url.Abs) -> IO(Maybe<&2, Res>):
   Url.Abs{+scheme, host, port, target} = a
-  fetch.http(method, host, port, hf, target, headers, body, String.eq(scheme, "http"))
+  fetch.scheme(method, host, port, hf, target, headers, body, scheme, Bool.or(String.eq(scheme, "http"), String.eq(scheme, "https")))
 
 def fetch.url(method: String, headers: Map<&2, String>, body: String, u: Maybe<&2, Url.Abs>) -> IO(Maybe<&2, Res>):
   match u:
