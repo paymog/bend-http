@@ -127,3 +127,58 @@ def Laws.chunk_overflow_rejects():
 
 def Laws.parse_chunked_req():
   {==}
+
+def Laws.frame_head_more():
+  {==}
+
+def Laws.frame_head_cut_bad():
+  {==}
+
+def Laws.frame_cl_more():
+  {==}
+
+def Laws.frame_cl_cut_bad():
+  {==}
+
+def Laws.frame_cl_done(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.frame_open_more(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.frame_open_close(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.frame_chunked_more():
+  {==}
+
+def Laws.frame_chunked_done():
+  {==}
+
+def Laws.frame_head_request(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.frame_204():
+  {==}
+
+def Laws.frame_304():
+  {==}
+
+def Laws.frame_bad_status():
+  {==}

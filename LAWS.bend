@@ -112,3 +112,62 @@ law chunk_overflow_rejects:
 # RFC 9112 §6.1: chunked request without Content-Length is framed by chunks.
 law parse_chunked_req:
   {Http.got_body(Http.parse("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n3\r\n yo\r\n0\r\n\r\n")) == "hi yo" : String}
+
+def body_of(f: Http.Frame) -> Maybe<&2, String>:
+  match f:
+    case Http.FrameDone{r}:
+      Some{Http.res_body(Some{r})}
+    case Http.FrameBad{}:
+      None{}
+    case Http.FrameMore{}:
+      None{}
+
+# Header block not finished: read on while open; a cut after close is not a message.
+law frame_head_more:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_head_cut_bad:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-", True{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+# RFC 9112 §6.3 (6) and §8: short Content-Length body.
+law frame_cl_more:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_cl_cut_bad:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi", True{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+# Content-Length ends the message; no need to wait for close, extra bytes are not body.
+law frame_cl_done:
+  for b: String
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ++ b, False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+
+# RFC 9112 §6.3 (8): no framing ⇒ wait for close, then everything is body.
+law frame_open_more:
+  for b: String
+  {Http.frame("HTTP/1.1 200 OK\r\n\r\n" ++ b, False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_open_close:
+  for b: String
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\n\r\n" ++ b, True{}, False{})) == Some{b} : Maybe<&2, String>}
+
+# Chunked: a partial chunk reads on; the last-chunk ends it without close.
+law frame_chunked_more:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_chunked_done:
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", False{}, False{})) == Some{"hello"} : Maybe<&2, String>}
+
+# RFC 9112 §6.3 (1): a HEAD response has no body, whatever Content-Length says.
+law frame_head_request:
+  for b: String
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n" ++ b, False{}, True{})) == Some{""} : Maybe<&2, String>}
+
+# RFC 9112 §6.3 (1): 204 and 304 have no body.
+law frame_204:
+  {body_of(Http.frame("HTTP/1.1 204 No Content\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+
+law frame_304:
+  {body_of(Http.frame("HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+
+law frame_bad_status:
+  {Http.frame("HTTP/1.1 abc OK\r\n\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}

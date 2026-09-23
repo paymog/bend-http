@@ -1,7 +1,9 @@
 import Base
 
-# HTTP/1.1 codec (RFC 9112). No TLS, no DNS, no chunked.
-# parse: start-line → field lines → blank → body length (§6.3).
+# HTTP/1.1 codec (RFC 9112). No TLS, no DNS yet.
+# parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
+# fetch reads until frame() says the response is whole. Build with -o for big bodies:
+# the `bend file.bend` runner overflows on ~30 KB strings; native binaries do not.
 #   import ./http.bend as Http
 
 type Req is Data:
@@ -453,54 +455,108 @@ def parse.res.te(+h: Map<&2, String>, rest: String, te: Bool) -> Maybe<&2, Strin
 def parse.res.body(+h: Map<&2, String>, rest: String) -> Maybe<&2, String>:
   parse.res.te(h, rest, has_header(h, "transfer-encoding"))
 
-def parse.res.finish(status: U32, h: Map<&2, String>, body: Maybe<&2, String>) -> Maybe<&2, Res>:
+# Bad: never a message. More: a valid prefix; read on. Done: a whole response.
+type Frame is Data:
+  FrameBad{}
+  FrameMore{}
+  FrameDone{res: Res}
+
+# RFC 9112 §8: a message cut short by close is incomplete, not valid.
+def frame.cut(closed: Bool) -> Frame:
+  match closed:
+    case True{}:
+      FrameBad{}
+    case False{}:
+      FrameMore{}
+
+def frame.wait(res: Res, wait: Bool) -> Frame:
+  match wait:
+    case True{}:
+      FrameMore{}
+    case False{}:
+      FrameDone{res}
+
+def frame.done(status: U32, h: Map<&2, String>, body: Maybe<&2, String>, +closed: Bool, open: Bool) -> Frame:
   match body:
     case None{}:
-      None{}
+      frame.cut(closed)
     case Some{b}:
-      Some{Res{status, h, b}}
+      frame.wait(Res{status, h, b}, Bool.and(open, Bool.not(closed)))
 
-def parse.res.fields(status: U32, rest: String, fs: Maybe<&2, Map<&2, String>>) -> Maybe<&2, Res>:
+# RFC 9112 §6.3 (8): no TE and no CL ⇒ the body runs until the server closes.
+def frame.open(+h: Map<&2, String>) -> Bool:
+  Bool.not(Bool.or(has_header(h, "transfer-encoding"), has_header(h, "content-length")))
+
+# RFC 9112 §6.3 (1): HEAD, 1xx, 204 and 304 responses end at the blank line.
+# ponytail: 1xx is returned as final; skip interim responses if a server sends 103
+def frame.nobody(+status: U32, head: Bool) -> Bool:
+  Bool.or(head, Bool.or(U32.is_lt(status, 200), Bool.or(U32.is_eq(status, 204), U32.is_eq(status, 304))))
+
+def frame.status(status: U32, +h: Map<&2, String>, rest: String, closed: Bool, nobody: Bool) -> Frame:
+  match nobody:
+    case True{}:
+      FrameDone{Res{status, h, ""}}
+    case False{}:
+      frame.done(status, h, parse.res.body(h, rest), closed, frame.open(h))
+
+def parse.res.fields(+status: U32, rest: String, fs: Maybe<&2, Map<&2, String>>, closed: Bool, head: Bool) -> Frame:
   match fs:
     case None{}:
-      None{}
-    case Some{+h}:
-      parse.res.finish(status, h, parse.res.body(h, rest))
+      FrameBad{}
+    case Some{h}:
+      frame.status(status, h, rest, closed, frame.nobody(status, head))
 
-def parse.res.num(code: Maybe<&2, U32>, headers: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+def parse.res.num(code: Maybe<&2, U32>, headers: List<&2, String>, rest: String, closed: Bool, head: Bool) -> Frame:
   match code:
     case None{}:
-      None{}
+      FrameBad{}
     case Some{n}:
-      parse.res.fields(n, rest, parse.headers(headers, FieldsOk{empty()}))
+      parse.res.fields(n, rest, parse.headers(headers, FieldsOk{empty()}), closed, head)
 
-def parse.res.ver(ver: String, code: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Res>:
+def parse.res.ver(code: String, headers: List<&2, String>, rest: String, closed: Bool, head: Bool, ok: Bool) -> Frame:
   match ok:
     case False{}:
-      None{}
+      FrameBad{}
     case True{}:
-      parse.res.num(parse_u32(code), headers, rest)
+      parse.res.num(parse_u32(code), headers, rest, closed, head)
 
-def parse.res.start3(mpv: String & String & String, headers: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+def parse.res.start3(mpv: String & String & String, headers: List<&2, String>, rest: String, closed: Bool, head: Bool) -> Frame:
   (+ver, code, reason) = mpv
-  parse.res.ver(ver, code, headers, rest, String.eq(ver, "HTTP/1.1"))
+  parse.res.ver(code, headers, rest, closed, head, Bool.or(String.eq(ver, "HTTP/1.1"), String.eq(ver, "HTTP/1.0")))
 
-def parse.res.lines(xs: List<&2, String>, rest: String) -> Maybe<&2, Res>:
+def parse.res.lines(xs: List<&2, String>, rest: String, closed: Bool, head: Bool) -> Frame:
   match xs:
     case Nil{}:
-      None{}
+      FrameBad{}
     case Con{line, headers}:
-      parse.res.start3(start_line(line), headers, rest)
+      parse.res.start3(start_line(line), headers, rest, closed, head)
 
-def parse.res.head(head: String, rest: String) -> Maybe<&2, Res>:
-  parse.res.lines(String.lines(head), rest)
+def parse.res.blank(hd: String, rest: String, +closed: Bool, head: Bool, ok: Bool) -> Frame:
+  match ok:
+    case False{}:
+      frame.cut(closed)
+    case True{}:
+      parse.res.lines(String.lines(hd), rest, closed, head)
 
-def parse.res.of(hb: String & String) -> Maybe<&2, Res>:
-  (head, rest) = hb
-  parse.res.head(head, rest)
+def parse.res.of(hb: String & String, closed: Bool, head: Bool) -> Frame:
+  (+hd, rest) = hb
+  parse.res.blank(hd, rest, closed, head, String.ends_with(hd, "\r\n\r\n"))
+
+# frame(bytes so far, server closed?, request was HEAD?)
+def frame(raw: String, closed: Bool, head: Bool) -> Frame:
+  parse.res.of(split_at_blank(raw), closed, head)
+
+def frame.res(f: Frame) -> Maybe<&2, Res>:
+  match f:
+    case FrameDone{res}:
+      Some{res}
+    case FrameBad{}:
+      None{}
+    case FrameMore{}:
+      None{}
 
 def parse_res(raw: String) -> Maybe<&2, Res>:
-  parse.res.of(split_at_blank(raw))
+  frame.res(frame(raw, True{}, False{}))
 
 def res_body.res(res: Res) -> String:
   Res{status, headers, body} = res
@@ -561,33 +617,61 @@ def request(method: String, path: String, headers: Map<&2, String>, body: String
 def encode_req(method: String, path: String, host: String, +body: String) -> String:
   request(method, path, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, empty(), "host", host), "connection", "close"), "content-length", U32.show(nat_u32(String.length(body)))), body)
 
-# ponytail: two recvs; loop when bodies exceed 16KiB
-def fetch_tail(head: String, m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, Res>):
-  (s, r) = m
+def fetch.close(s: Socket, r: Maybe<&2, Res>) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
-    tail : String <- IO.pass(String, r)
     Socket.close(s)
-    return parse_res(head ++ tail)
+    return r
 
-def fetch_head(m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, Res>):
+def fetch.cap(f: Frame, over: Bool) -> Frame:
+  match over:
+    case True{}:
+      FrameBad{}
+    case False{}:
+      f
+
+# Untrusted servers must not grow the buffer without bound.
+def fetch.max() -> Nat:
+  U32.to_nat(16777216)
+
+def fetch.next.buf(s: Socket, +buf: String, closed: Bool, head: Bool) -> Socket & String & Frame:
+  (s, buf, fetch.cap(frame(buf, closed, head), Nat.is_lt(fetch.max(), String.length(buf))))
+
+def fetch.next.r(head: Bool, s: Socket, buf: String, r: Result<&1, &1, U32 & String, String>) -> Socket & String & Frame:
+  match r:
+    case Fail{e}:
+      (s, buf, FrameBad{})
+    case Done{+got}:
+      fetch.next.buf(s, buf ++ got, String.is_empty(got), head)
+
+def fetch.next(head: Bool, buf: String, m: Socket & Result<&1, &1, U32 & String, String>) -> Socket & String & Frame:
   (s, r) = m
-  do IO<Maybe<&2, Res>>:
-    head : String <- IO.pass(String, r)
-    rest : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 8192)
-    fetch_tail(head, rest)
+  fetch.next.r(head, s, buf, r)
 
-def fetch_sent(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+# Reads until frame says Done or Bad; an empty recv means the server closed.
+@unsafe
+def fetch.read(+head: Bool, st: Socket & String & Frame) -> IO(Maybe<&2, Res>):
+  (s, buf, f) = st
+  match f:
+    case FrameMore{}:
+      do IO<Maybe<&2, Res>>:
+        m : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 65536)
+        fetch.read(head, fetch.next(head, buf, m))
+    case FrameBad{}:
+      fetch.close(s, None{})
+    case FrameDone{res}:
+      fetch.close(s, Some{res})
+
+def fetch_sent(head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
   do IO<Maybe<&2, Res>>:
     IO.pass(Unit, r)
-    read : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 8192)
-    fetch_head(read)
+    fetch.read(head, (s, "", FrameMore{}))
 
-def fetch(method: String, ip: String, port: U32, host: String, path: String, body: String) -> IO(Maybe<&2, Res>):
+def fetch(+method: String, ip: String, port: U32, host: String, path: String, body: String) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
     c    : Socket <- IO.try(Socket, TCP.connect(ip, port))
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(c, encode_req(method, path, host, body))
-    fetch_sent(sent)
+    fetch_sent(String.eq(method, "HEAD"), sent)
 
 def get_body.res(res: Res) -> String:
   Res{status, headers, body} = res
