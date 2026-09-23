@@ -30,3 +30,21 @@ jobs:
           for f in url json encoding router; do
             bend "$f/check.bend"
           done
+
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bend
+        run: curl -fsSL https://bend-lang.com/install.sh | sh
+        env:
+          BEND_NO_TELEMETRY: "1"
+      - name: Live fetch smoke
+        env:
+          BEND_NO_TELEMETRY: "1"
+        run: |
+          export PATH="$HOME/.bend/bin:$PATH"
+          bend smoke.bend | tee smoke.out
+          ! grep -q '^fail ' smoke.out

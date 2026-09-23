@@ -16,7 +16,7 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 ## Before other people use it
 
 - [ ] **Test the README on a clean machine.** Including the x86_64 Mac.
-- [ ] **Run proofs and smoke tests in CI.** Run every `PROOF.bend` and `check.bend` on each push. Add a live smoke job (example.com over http and https, badssl.com negatives) that may fail without blocking.
+- [x] **Run proofs and smoke tests in CI.** Proofs run on each push. A live smoke job fetches example.com over http and https and the badssl.com negatives. It may fail without blocking.
 - [ ] **Fix the server side.** `serve` reads one 8 KiB recv and parses it, so bigger requests are cut off and get a 400. Read requests with the same `need`/`frame` loop the client uses. `response()` writes "OK" for every status; use the right reason phrase. The server accepts only `HTTP/1.1` request lines.
 
 ## After people use it
