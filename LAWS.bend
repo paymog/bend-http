@@ -171,3 +171,15 @@ law frame_304:
 
 law frame_bad_status:
   {Http.frame("HTTP/1.1 abc OK\r\n\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+# RFC 9110 §8.6: a bodiless GET carries no Content-Length.
+law req_get:
+  {Http.encode_req("GET", "/x", "h", Http.empty(), "") == "GET /x HTTP/1.1\r\nconnection: close\r\nhost: h\r\n\r\n" : String}
+
+# Content-Length counts octets; caller CL/TE never reach the wire; field values cannot inject lines.
+law req_post_guarded:
+  {Http.encode_req("POST", "/", "h:8080", Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Http.empty(), "Content-Length", "99"), "Transfer-Encoding", "chunked"), "X-A", "1\r\nEvil: 1"), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}) == "POST / HTTP/1.1\r\nconnection: close\r\ncontent-length: 2\r\nhost: h:8080\r\nx-a: 1Evil: 1\r\n\r\n" ++ SCon{Chr{195}, SCon{Chr{169}, SNil{}}} : String}
+
+# What the client sends, the server parses back to the same body.
+law req_roundtrip:
+  {Http.got_body(Http.parse(Http.encode_req("PUT", "/k", "h", Http.empty(), "v=1"))) == "v=1" : String}

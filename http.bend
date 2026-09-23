@@ -1,7 +1,11 @@
 import Base
+import ./wire.bend as Wire
+import ./dns/dns.bend as Dns
+import ./url/url.bend as Url
 
-# HTTP/1.1 codec (RFC 9112). No TLS, no DNS yet.
+# HTTP/1.1 codec and client (RFC 9112). http:// only until TLS lands.
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
+# Bodies are byte strings: one Char per octet, so lengths are exact.
 # fetch reads until frame() says the response is whole. Build with -o for big bodies:
 # the `bend file.bend` runner overflows on ~30 KB strings; native binaries do not.
 #   import ./http.bend as Http
@@ -614,13 +618,42 @@ def encode(r: Res) -> String:
 def request(method: String, path: String, headers: Map<&2, String>, body: String) -> String:
   (method ++ " " ++ path ++ " HTTP/1.1" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
 
-def encode_req(method: String, path: String, host: String, +body: String) -> String:
-  request(method, path, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, empty(), "host", host), "connection", "close"), "content-length", U32.show(nat_u32(String.length(body)))), body)
+def req.reserved(+k: String) -> Bool:
+  Bool.or(Bool.or(String.eq(k, "host"), String.eq(k, "connection")), Bool.or(String.eq(k, "content-length"), String.eq(k, "transfer-encoding")))
+
+def req.put.one(m: Map<&2, String>, +k: String, v: String, skip: Bool) -> Map<&2, String>:
+  match skip:
+    case True{}:
+      m
+    case False{}:
+      Map.set(&2, String, m, k, v)
+
+def req.put(xs: List<&2, Sigma<&2, &2, String, _ => String>>, m: Map<&2, String>) -> Map<&2, String>:
+  match xs:
+    case Nil{}:
+      m
+    case (k, v) <> t:
+      +lk = String.to_lower(k)
+      req.put(t, req.put.one(m, lk, v, req.reserved(lk)))
+
+# RFC 9110 §8.6: no Content-Length on a bodiless request whose method gives a body no meaning.
+def req.cl(+m: Map<&2, String>, +method: String, +body: String) -> Map<&2, String>:
+  +bodied = Bool.or(Bool.not(String.is_empty(body)), Bool.or(String.eq(method, "POST"), Bool.or(String.eq(method, "PUT"), String.eq(method, "PATCH"))))
+  Bool.pick(Map<&2, String>, bodied, Map.set(&2, String, m, "content-length", U32.show(nat_u32(String.length(body)))), m)
+
+# Caller headers are lowercased so they cannot duplicate ours; host, connection,
+# content-length and transfer-encoding are always ours (no smuggling through them).
+def encode_req(+method: String, target: String, host: String, headers: Map<&2, String>, +body: String) -> String:
+  +h = Map.set(&2, String, Map.set(&2, String, req.put(Map.to_list(&2, String, headers), empty()), "host", host), "connection", "close")
+  request(method, target, req.cl(h, method, body), body)
 
 def fetch.close(s: Socket, r: Maybe<&2, Res>) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
     Socket.close(s)
     return r
+
+def fetch.none() -> IO(Maybe<&2, Res>):
+  IO.pure(Maybe<&2, Res>, None{})
 
 def fetch.cap(f: Frame, over: Bool) -> Frame:
   match over:
@@ -654,40 +687,73 @@ def fetch.read(+head: Bool, st: Socket & String & Frame) -> IO(Maybe<&2, Res>):
   match f:
     case FrameMore{}:
       do IO<Maybe<&2, Res>>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 65536)
+        m : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 65536)
         fetch.read(head, fetch.next(head, buf, m))
     case FrameBad{}:
       fetch.close(s, None{})
     case FrameDone{res}:
       fetch.close(s, Some{res})
 
-def fetch_sent(head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+def fetch.sent(head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
+  match r:
+    case Fail{e}:
+      fetch.close(s, None{})
+    case Done{u}:
+      fetch.read(head, (s, "", FrameMore{}))
+
+def fetch.conn(head: Bool, wire: String, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, Res>):
+  match r:
+    case Fail{e}:
+      fetch.none()
+    case Done{c}:
+      do IO<Maybe<&2, Res>>:
+        sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(c, wire)
+        fetch.sent(head, sent)
+
+# One request on one connection to an IPv4 address. Bodies are byte strings.
+def fetch.ip(+method: String, ip: String, port: U32, host: String, target: String, headers: Map<&2, String>, body: String) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
-    IO.pass(Unit, r)
-    fetch.read(head, (s, "", FrameMore{}))
+    c : Result<&1, &1, U32 & String, Socket> <- TCP.connect(ip, port)
+    fetch.conn(String.eq(method, "HEAD"), encode_req(method, target, host, headers, body), c)
 
-def fetch(+method: String, ip: String, port: U32, host: String, path: String, body: String) -> IO(Maybe<&2, Res>):
-  do IO<Maybe<&2, Res>>:
-    c    : Socket <- IO.try(Socket, TCP.connect(ip, port))
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(c, encode_req(method, path, host, body))
-    fetch_sent(String.eq(method, "HEAD"), sent)
-
-def get_body.res(res: Res) -> String:
-  Res{status, headers, body} = res
-  body
-
-def get_body(m: Maybe<&2, Res>) -> String:
-  match m:
+def fetch.addr(method: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, ip: Maybe<&2, String>) -> IO(Maybe<&2, Res>):
+  match ip:
     case None{}:
-      ""
-    case Some{res}:
-      get_body.res(res)
+      fetch.none()
+    case Some{addr}:
+      fetch.ip(method, addr, port, hf, target, headers, body)
 
-def get(ip: String, port: U32, host: String, path: String) -> IO(String):
+# ponytail: http only; https lands with TLS
+def fetch.http(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, http: Bool) -> IO(Maybe<&2, Res>):
+  match http:
+    case False{}:
+      fetch.none()
+    case True{}:
+      do IO<Maybe<&2, Res>>:
+        ip : Maybe<&2, String> <- Dns.resolve(host)
+        fetch.addr(method, port, hf, target, headers, body, ip)
+
+def fetch.abs(method: String, headers: Map<&2, String>, body: String, hf: String, a: Url.Abs) -> IO(Maybe<&2, Res>):
+  Url.Abs{+scheme, host, port, target} = a
+  fetch.http(method, host, port, hf, target, headers, body, String.eq(scheme, "http"))
+
+def fetch.url(method: String, headers: Map<&2, String>, body: String, u: Maybe<&2, Url.Abs>) -> IO(Maybe<&2, Res>):
+  match u:
+    case None{}:
+      fetch.none()
+    case Some{+a}:
+      fetch.abs(method, headers, body, Url.host_field(a), a)
+
+# fetch("GET", "http://example.com/x?y=1", headers, body): None on a bad URL,
+# a failed lookup or connect, or a malformed response. Body and response body are bytes.
+def fetch(method: String, url: String, headers: Map<&2, String>, body: String) -> IO(Maybe<&2, Res>):
+  fetch.url(method, headers, body, Url.absolute(url))
+
+def get(url: String) -> IO(String):
   do IO<String>:
-    m : Maybe<&2, Res> <- fetch("GET", ip, port, host, path, "")
-    return get_body(m)
+    m : Maybe<&2, Res> <- fetch("GET", url, empty(), "")
+    return res_body(m)
 
 def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
   (s, r) = m
@@ -695,7 +761,7 @@ def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
 
 def reply_send(s: Socket, res: Res) -> IO(Unit):
   do IO<Unit>:
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- TCP.send(s, encode(res))
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode(res))
     sent_fin(sent)
 
 def reply_handle(~h: Req -> IO(Res), s: Socket, req: Req) -> IO(Unit):
@@ -723,7 +789,7 @@ def reply(~h: Req -> IO(Res), m: Socket & Result<&1, &1, U32 & String, String>) 
 
 def talk(~h: Req -> IO(Res), s: Socket) -> IO(Unit):
   do IO<Unit>:
-    read : Socket & Result<&1, &1, U32 & String, String> <- TCP.recv(s, 8192)
+    read : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 8192)
     reply(~h, read)
 
 def conn(~h: Req -> IO(Res), m: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Listener):

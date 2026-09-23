@@ -125,22 +125,19 @@ def pct.decode.go(s: String) -> Maybe<&2, String>:
 
 def pct.decode(s: String) -> Maybe<&2, String>:
   pct.decode.go(s)
-def take_q.go(s: String, +acc: String) -> String & String:
+def take_to.go(s: String, +stop: U32, +acc: String) -> String & String:
   match s:
     case SNil{}:
       (String.reverse(acc), SNil{})
     case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, U32.is_eq(c, 63), (String.reverse(acc), t), take_q.go(t, SCon{Chr{c}, acc}))
+      Bool.pick(String & String, U32.is_eq(c, stop), (String.reverse(acc), t), take_to.go(t, stop, SCon{Chr{c}, acc}))
 
-def take_eq.go(s: String, +acc: String) -> String & String:
-  match s:
-    case SNil{}:
-      (String.reverse(acc), SNil{})
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, U32.is_eq(c, 61), (String.reverse(acc), t), take_eq.go(t, SCon{Chr{c}, acc}))
+# (text before the first stop char, text after it)
+def take_to(s: String, stop: U32) -> String & String:
+  take_to.go(s, stop, SNil{})
 
 def pair(kv: String) -> String & String:
-  take_eq.go(kv, SNil{})
+  take_to(kv, 61)
 
 def qput.decv(m: Map<&2, String>, key: String, v: Maybe<&2, String>) -> Map<&2, String>:
   match v:
@@ -193,7 +190,7 @@ def parse.ok(+s: String, ok: Bool) -> Maybe<&2, Url>:
     case False{}:
       None{}
     case True{}:
-      parse.split(take_q.go(s, SNil{}))
+      parse.split(take_to(s, 63))
 
 def parse(+s: String) -> Maybe<&2, Url>:
   parse.ok(s, String.starts_with(s, "/"))
@@ -221,3 +218,108 @@ def encode.go(path: String, +q: String) -> String:
 def encode(u: Url) -> String:
   Url{path, query} = u
   encode.go(pct.encode_path(path), enc.pairs(query))
+
+# Absolute http(s) URLs (RFC 3986 §3) for clients.
+# ---------------------------------------------
+
+# target is the RFC 9112 §3.2.1 origin-form: path (never empty) and query, no fragment.
+type Abs is Data:
+  Abs{scheme: String, host: String, port: U32, target: String}
+
+def has(s: String, +c: U32) -> Bool:
+  match s:
+    case SNil{}:
+      False{}
+    case SCon{Chr{d}, t}:
+      Bool.or(U32.is_eq(d, c), has(t, c))
+
+def auth_end(+c: U32) -> Bool:
+  Bool.or(U32.is_eq(c, 47), Bool.or(U32.is_eq(c, 63), U32.is_eq(c, 35)))
+
+# §3.2: the authority runs to the first "/", "?" or "#".
+def take_auth.go(s: String, +acc: String) -> String & String:
+  match s:
+    case SNil{}:
+      (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(String & String, auth_end(c), (String.reverse(acc), SCon{Chr{c}, t}), take_auth.go(t, SCon{Chr{c}, acc}))
+
+def default_port(+scheme: String) -> Maybe<&2, U32>:
+  Bool.pick(Maybe<&2, U32>, String.eq(scheme, "http"), Some{80}, Bool.pick(Maybe<&2, U32>, String.eq(scheme, "https"), Some{443}, None{}))
+
+def abs.target(+pq: String) -> String:
+  Bool.pick(String, String.starts_with(pq, "/"), pq, "/" ++ pq)
+
+def abs.fst(ab: String & String) -> String:
+  (a, b) = ab
+  a
+
+# §3.5: the fragment is for the client; it never goes on the wire.
+def abs.build(scheme: String, host: String, port: Maybe<&2, U32>, rest: String) -> Maybe<&2, Abs>:
+  match port:
+    case None{}:
+      None{}
+    case Some{p}:
+      Some{Abs{scheme, host, p, abs.target(abs.fst(take_to(rest, 35)))}}
+
+def abs.port.num(n: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match n:
+    case None{}:
+      None{}
+    case Some{+p}:
+      Bool.pick(Maybe<&2, U32>, U32.is_le(p, 65535), Some{p}, None{})
+
+# §3.2.3: an empty port means the scheme's default.
+def abs.port(+ps: String, dflt: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  Bool.pick(Maybe<&2, U32>, String.is_empty(ps), dflt, abs.port.num(U32.read(ps)))
+
+def abs.hostok(scheme: String, host: String, port: Maybe<&2, U32>, rest: String, ok: Bool) -> Maybe<&2, Abs>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      abs.build(scheme, host, port, rest)
+
+# §3.2.2: hosts are case-insensitive. IPv6 literals are refused (IPv4-only runtime).
+def abs.hostport(scheme: String, dflt: Maybe<&2, U32>, hp: String & String, rest: String) -> Maybe<&2, Abs>:
+  (+host, ps) = hp
+  abs.hostok(scheme, String.to_lower(host), abs.port(ps, dflt), rest, Bool.not(Bool.or(String.is_empty(host), String.starts_with(host, "["))))
+
+# WHATWG fetch refuses URLs that carry credentials (user:pass@).
+def abs.auth.if(+scheme: String, auth: String, rest: String, creds: Bool) -> Maybe<&2, Abs>:
+  match creds:
+    case True{}:
+      None{}
+    case False{}:
+      abs.hostport(scheme, default_port(scheme), take_to(auth, 58), rest)
+
+def abs.auth(scheme: String, ar: String & String) -> Maybe<&2, Abs>:
+  (+auth, rest) = ar
+  abs.auth.if(scheme, auth, rest, has(auth, 64))
+
+def abs.slashes(scheme: String, +rest: String, ok: Bool) -> Maybe<&2, Abs>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      abs.auth(String.to_lower(scheme), take_auth.go(String.drop(rest, 2n), SNil{}))
+
+def abs.scheme(sr: String & String) -> Maybe<&2, Abs>:
+  (scheme, +rest) = sr
+  abs.slashes(scheme, rest, String.starts_with(rest, "//"))
+
+# scheme://host[:port][/path][?query][#fragment]
+def absolute(s: String) -> Maybe<&2, Abs>:
+  abs.scheme(take_to(s, 58))
+
+def abs.port.dflt(m: Maybe<&2, U32>) -> U32:
+  match m:
+    case None{}:
+      0
+    case Some{p}:
+      p
+
+# RFC 9110 §7.2: the Host field; the default port may be left out.
+def host_field(a: Abs) -> String:
+  Abs{+scheme, +host, +port, target} = a
+  Bool.pick(String, U32.is_eq(port, abs.port.dflt(default_port(scheme))), host, host ++ ":" ++ U32.show(port))

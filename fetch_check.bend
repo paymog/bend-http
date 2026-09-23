@@ -2,17 +2,27 @@ import Base
 import ./http.bend as Http
 
 def show_res(res: Http.Res) -> IO(Unit):
-  Http.Res{status, headers, body} = res
-  IO.print(U32.show(status) ++ " " ++ body)
+  Http.Res{status, +headers, +body} = res
+  IO.print(U32.show(status) ++ " bytes=" ++ Nat.show(String.length(body)) ++ " te=" ++ Http.header(headers, "transfer-encoding") ++ " head=" ++ String.take(body, 24n))
 
-def show(m: Maybe<&2, Http.Res>) -> IO(Unit):
+def show(url: String, m: Maybe<&2, Http.Res>) -> IO(Unit):
   match m:
     case None{}:
-      IO.print("none")
+      IO.print(url ++ " -> none")
     case Some{res}:
-      show_res(res)
+      do IO<Unit>:
+        IO.print(url)
+        show_res(res)
+
+def try(+url: String) -> IO(Unit):
+  do IO<Unit>:
+    m : Maybe<&2, Http.Res> <- Http.fetch("GET", url, Http.empty(), "")
+    show(url, m)
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    m : Maybe<&2, Http.Res> <- Http.fetch("GET", "127.0.0.1", 18080, "localhost", "/hello", "")
-    show(m)
+    try("http://example.com/")
+    try("http://httpbin.org/stream/3")
+    try("http://httpbin.org/encoding/utf8")
+    try("http://no-such-host.invalid/")
+    try("not a url")

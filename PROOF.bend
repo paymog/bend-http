@@ -182,3 +182,12 @@ def Laws.frame_304():
 
 def Laws.frame_bad_status():
   {==}
+
+def Laws.req_get():
+  {==}
+
+def Laws.req_post_guarded():
+  {==}
+
+def Laws.req_roundtrip():
+  {==}
