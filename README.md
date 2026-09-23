@@ -6,7 +6,7 @@ HTTP/1.1 client for Bend. `http` does `http://` and `https://`, DNS, redirects, 
 
 ## Install
 
-You need [Bend 2.0.25](https://bend-lang.com/install.sh), [Bun 1.4.2](https://bun.sh/docs/installation), and Elbow 0.1.0. macOS or Linux, including WSL. Windows is not supported.
+You need [Bend 2.0.26](https://bend-lang.com/install.sh), [Bun 1.4.2](https://bun.sh/docs/installation), and Elbow 0.1.0. macOS or Linux, including WSL. Windows is not supported.
 
 ```sh
 version=0.1.0
@@ -18,7 +18,7 @@ tar -xzf "elbow-${version}.tar.gz" --strip-components=2 -C "$HOME/.local/bin" "e
 export PATH="$HOME/.local/bin:$PATH"
 ```
 
-In a Bend project:
+Create `main.bend`, then:
 
 ```sh
 elbow add http@0.9.2
@@ -33,33 +33,36 @@ HTTPS needs OpenSSL 3 at run time. On macOS, `brew install openssl@3`. The clien
 ```bend
 import Base
 
+def show(got: Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
+  match got:
+    case Done{res}:
+      Http.Res{status, headers, body} = res
+      IO.print(U32.show(status) ++ " " ++ Http.header(headers, "content-type"))
+    case Fail{err}:
+      match err:
+        case Http.ErrUrl{}:
+          IO.print("bad url")
+        case Http.ErrDns{}:
+          IO.print("dns")
+        case Http.ErrConnect{code, why}:
+          IO.print("connect " ++ U32.show(code) ++ " " ++ why)
+        case Http.ErrTls{code, why}:
+          IO.print("tls " ++ U32.show(code) ++ " " ++ why)
+        case Http.ErrRead{code, why}:
+          IO.print("read " ++ U32.show(code) ++ " " ++ why)
+        case Http.ErrWrite{code, why}:
+          IO.print("write " ++ U32.show(code) ++ " " ++ why)
+        case Http.ErrTimeout{}:
+          IO.print("timeout")
+        case Http.ErrRedirect{}:
+          IO.print("redirect")
+        case Http.ErrBad{}:
+          IO.print("bad response")
+
 def main() -> IO(Unit):
   do IO<Unit>:
     got : Result<&2, &2, Http.Err, Http.Res> <- Http.get("https://example.com/")
-    match got:
-      case Done{res}:
-        Http.Res{status, headers, body} = res
-        IO.print(U32.show(status) ++ " " ++ Http.header(headers, "content-type"))
-      case Fail{err}:
-        match err:
-          case Http.ErrUrl{}:
-            IO.print("bad url")
-          case Http.ErrDns{}:
-            IO.print("dns")
-          case Http.ErrConnect{code, why}:
-            IO.print("connect " ++ U32.show(code) ++ " " ++ why)
-          case Http.ErrTls{code, why}:
-            IO.print("tls " ++ U32.show(code) ++ " " ++ why)
-          case Http.ErrRead{code, why}:
-            IO.print("read " ++ U32.show(code) ++ " " ++ why)
-          case Http.ErrWrite{code, why}:
-            IO.print("write " ++ U32.show(code) ++ " " ++ why)
-          case Http.ErrTimeout{}:
-            IO.print("timeout")
-          case Http.ErrRedirect{}:
-            IO.print("redirect")
-          case Http.ErrBad{}:
-            IO.print("bad response")
+    show(got)
 ```
 
 `Http.fetch(method, url, headers, body)` is the same call with a method, headers, and body. `Http.fetch.with(..., ms)` sets the per-step timeout. The default is 30 seconds. A redirect chain stops after 20 hops (`ErrRedirect`). `ETIMEDOUT` is 60 on macOS and 110 on Linux. Both become `ErrTimeout`.
