@@ -79,8 +79,51 @@ def Laws.cl_te_rejects(b):
 def Laws.parse_res_body():
   {==}
 
-def Laws.chunk_empty():
+def Laws.cl_short_rejects():
+  {==}
+
+def Laws.chunk_last_ends(b):
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{Chr{a}, t}:
+      {==}
+
+def Laws.chunk_data_opaque(c):
+  {==}
+
+def Laws.chunk_needs_size(b):
   {==}
 
 def Laws.chunk_hello():
+  {==}
+
+def Laws.chunk_many():
+  {==}
+
+def Laws.chunk_hex_case():
+  {==}
+
+def Laws.chunk_ext_ignored():
+  {==}
+
+def Laws.chunk_trailer():
+  {==}
+
+def Laws.chunk_short_rejects():
+  {==}
+
+def Laws.chunk_no_crlf_after_data_rejects():
+  {==}
+
+def Laws.chunk_unterminated_rejects():
+  {==}
+
+def Laws.chunk_bare_lf_rejects():
+  {==}
+
+def Laws.chunk_overflow_rejects():
+  {==}
+
+def Laws.parse_chunked_req():
   {==}

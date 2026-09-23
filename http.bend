@@ -188,15 +188,31 @@ def parse_u32(s: String) -> Maybe<&2, U32>:
 
 
 
+def parse.take.if(+rest: String, +k: Nat, short: Bool) -> Maybe<&2, String>:
+  match short:
+    case True{}:
+      None{}
+    case False{}:
+      Some{String.take(rest, k)}
+
+# RFC 9112 §8: fewer bytes than Content-Length is an incomplete message.
+def parse.take.have(+rest: String, +k: Nat) -> Maybe<&2, String>:
+  parse.take.if(rest, k, Nat.is_lt(String.length(rest), k))
+
 def parse.take(rest: String, n: Maybe<&2, U32>) -> Maybe<&2, String>:
   match n:
     case None{}:
       None{}
     case Some{k}:
-      Some{String.take(rest, U32.to_nat(k))}
+      parse.take.have(rest, U32.to_nat(k))
 
 type HexSize is Data:
   HexSize{n: U32, rest: String}
+
+type Step is Data:
+  StepFail{}
+  StepDone{body: String}
+  StepNext{rest: String, acc: String}
 
 def is_hex(+c: U32) -> Bool:
   Bool.or(parse_u32.digit(c), Bool.or(Bool.and(U32.is_le(97, c), U32.is_le(c, 102)), Bool.and(U32.is_le(65, c), U32.is_le(c, 70))))
@@ -206,10 +222,10 @@ def hexv(+c: U32) -> U32:
 
 def chunk.lf1(r: String, n: U32, lf: Bool) -> Maybe<&2, HexSize>:
   match lf:
-    case False{}:
-      None{}
     case True{}:
       Some{HexSize{n, r}}
+    case False{}:
+      None{}
 
 def chunk.lf(t: String, n: U32) -> Maybe<&2, HexSize>:
   match t:
@@ -218,84 +234,107 @@ def chunk.lf(t: String, n: U32) -> Maybe<&2, HexSize>:
     case SCon{Chr{c}, r}:
       chunk.lf1(r, n, U32.is_eq(c, 10))
 
-def chunk.cr(c: U32, t: String, n: U32, seen: Bool, cr: Bool) -> Maybe<&2, HexSize>:
-  match cr:
-    case True{}:
-      chunk.lf(t, n)
-    case False{}:
-      None{}
-
-def chunk.size.go(s: String, +acc: U32, seen: Bool) -> Maybe<&2, HexSize>:
+# RFC 9112 §7.1.1: recipients ignore unknown chunk extensions.
+def chunk.ext(s: String, +n: U32) -> Maybe<&2, HexSize>:
   match s:
     case SNil{}:
       None{}
     case SCon{Chr{+c}, +t}:
-      Bool.pick(Maybe<&2, HexSize>, is_hex(c), chunk.size.go(t, (acc * 16 + hexv(c) : U32), True{}), chunk.cr(c, t, acc, seen, U32.is_eq(c, 13)))
+      Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 13), chunk.lf(t, n), Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 10), None{}, chunk.ext(t, n)))
+
+def chunk.size.end(+c: U32, +t: String, +n: U32, seen: Bool) -> Maybe<&2, HexSize>:
+  match seen:
+    case False{}:
+      None{}
+    case True{}:
+      Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 13), chunk.lf(t, n), Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 59), chunk.ext(t, n), None{}))
+
+def chunk.size.go(s: String, +acc: U32, +seen: Bool) -> Maybe<&2, HexSize>:
+  match s:
+    case SNil{}:
+      None{}
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(Maybe<&2, HexSize>, is_hex(c), Bool.pick(Maybe<&2, HexSize>, U32.is_le(acc, 268435455), chunk.size.go(t, (acc * 16 + hexv(c) : U32), True{}), None{}), chunk.size.end(c, t, acc, seen))
 
 def chunk.size(s: String) -> Maybe<&2, HexSize>:
   chunk.size.go(s, 0, False{})
 
-def chunk.last.if(+s: String, acc: String, ok: Bool) -> Maybe<&2, String>:
+def chunk.trailer.ok(acc: String, ok: Bool) -> Step:
   match ok:
-    case False{}:
-      None{}
     case True{}:
-      Some{acc}
-
-def chunk.last(+s: String, acc: String) -> Maybe<&2, String>:
-  chunk.last.if(s, acc, String.starts_with(s, "\r\n"))
-
-def chunk.end1(n: U32, rest: String, acc: String, zero: Bool) -> Maybe<&2, String>:
-  match zero:
+      StepDone{acc}
     case False{}:
-      None{}
+      StepFail{}
+
+def chunk.trailer.end(hb: String & String, acc: String) -> Step:
+  (+h, r) = hb
+  chunk.trailer.ok(acc, String.ends_with(h, "\r\n\r\n"))
+
+def chunk.trailer.if(rest: String, acc: String, blank: Bool) -> Step:
+  match blank:
     case True{}:
-      chunk.last(rest, acc)
+      StepDone{acc}
+    case False{}:
+      chunk.trailer.end(split_at_blank(rest), acc)
 
-def chunk.end(got: Maybe<&2, HexSize>, acc: String) -> Maybe<&2, String>:
-  match got:
-    case None{}:
-      None{}
-    case Some{HexSize{+n, rest}}:
-      chunk.end1(n, rest, acc, U32.is_eq(n, 0))
+# ponytail: trailer fields are dropped unparsed (§7.1.2 allows discarding)
+def chunk.trailer(+rest: String, acc: String) -> Step:
+  chunk.trailer.if(rest, acc, String.starts_with(rest, "\r\n"))
 
-def chunk.mid1(+after: String, acc: String, ok: Bool) -> Maybe<&2, String>:
+def chunk.crlf.if(data: String, +after: String, acc: String, ok: Bool) -> Step:
   match ok:
-    case False{}:
-      None{}
     case True{}:
-      chunk.end(chunk.size(String.drop(after, 2n)), acc)
+      StepNext{String.drop(after, 2n), acc ++ data}
+    case False{}:
+      StepFail{}
 
-def chunk.mid(+after: String, acc: String) -> Maybe<&2, String>:
-  chunk.mid1(after, acc, String.starts_with(after, "\r\n"))
+def chunk.crlf(data: String, +after: String, acc: String) -> Step:
+  chunk.crlf.if(data, after, acc, String.starts_with(after, "\r\n"))
 
-def chunk.data.if(+n: U32, +rest: String, acc: String, short: Bool) -> Maybe<&2, String>:
+def chunk.data.if(+rest: String, +k: Nat, acc: String, short: Bool) -> Step:
   match short:
     case True{}:
-      None{}
+      StepFail{}
     case False{}:
-      chunk.mid(String.drop(rest, U32.to_nat(n)), acc ++ String.take(rest, U32.to_nat(n)))
+      chunk.crlf(String.take(rest, k), String.drop(rest, k), acc)
 
-def chunk.data(+n: U32, +rest: String, acc: String) -> Maybe<&2, String>:
-  chunk.data.if(n, rest, acc, Nat.is_lt(String.length(rest), U32.to_nat(n)))
+def chunk.data(+rest: String, +k: Nat, acc: String) -> Step:
+  chunk.data.if(rest, k, acc, Nat.is_lt(String.length(rest), k))
 
-def chunk.more1(n: U32, rest: String, acc: String, zero: Bool) -> Maybe<&2, String>:
+def chunk.step.n(+n: U32, rest: String, acc: String, zero: Bool) -> Step:
   match zero:
     case True{}:
-      chunk.last(rest, acc)
+      chunk.trailer(rest, acc)
     case False{}:
-      chunk.data(n, rest, acc)
+      chunk.data(rest, U32.to_nat(n), acc)
 
-def chunk.more(got: Maybe<&2, HexSize>, acc: String) -> Maybe<&2, String>:
+def chunk.step.got(got: Maybe<&2, HexSize>, acc: String) -> Step:
   match got:
     case None{}:
-      None{}
+      StepFail{}
     case Some{HexSize{+n, rest}}:
-      chunk.more1(n, rest, acc, U32.is_eq(n, 0))
+      chunk.step.n(n, rest, acc, U32.is_eq(n, 0))
 
-# ponytail: one data chunk then last-chunk; multi-chunk when a loop is easy
-def chunk.decode(s: String) -> Maybe<&2, String>:
-  chunk.more(chunk.size(s), "")
+def chunk.step(s: String, acc: String) -> Step:
+  chunk.step.got(chunk.size(s), acc)
+
+# ponytail: acc ++ per chunk is O(body * chunks); a chunk list if bodies get big
+def chunk.go(fuel: Nat, st: Step) -> Maybe<&2, String>:
+  match fuel:
+    case 0n:
+      None{}
+    case 1n+f:
+      match st:
+        case StepFail{}:
+          None{}
+        case StepDone{b}:
+          Some{b}
+        case StepNext{r, a}:
+          chunk.go(f, chunk.step(r, a))
+
+# Every chunk eats at least 3 bytes, so length(s) steps always suffice.
+def chunk.decode(+s: String) -> Maybe<&2, String>:
+  chunk.go(String.length(s), chunk.step(s, ""))
 
 def parse.body.cl(+h: Map<&2, String>, rest: String, hascl: Bool) -> Maybe<&2, String>:
   match hascl:
