@@ -272,3 +272,27 @@ def Laws.gate_close_waits():
 
 def Laws.gate_closed_always():
   {==}
+
+def Laws.err_timeout_mac():
+  {==}
+
+def Laws.err_timeout_linux():
+  {==}
+
+def Laws.err_tls_keeps_why():
+  {==}
+
+def Laws.err_connect_keeps_code():
+  {==}
+
+def Laws.set_cookie_kept():
+  {==}
+
+def Laws.set_cookie_not_joined():
+  {==}
+
+def Laws.vary_kept():
+  {==}
+
+def Laws.set_cookie_lines():
+  {==}

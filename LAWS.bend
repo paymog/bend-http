@@ -16,7 +16,7 @@ law body_suffix:
 # LAW: a response is some head, then a blank line, then the page.
 law page_after_blank:
   for status: U32
-  for headers: Map<&2, String>
+  for headers: Map<&2, List<&2, String>>
   for +page: String
   exs head: String
   {head ++ ("\r\n\r\n" ++ page) == Http.response(status, headers, page) : String}
@@ -179,7 +179,7 @@ law req_get:
 
 # Content-Length counts octets; caller CL/TE never reach the wire; field values cannot inject lines.
 law req_post_guarded:
-  {Http.encode_req("POST", "/", "h:8080", Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Http.empty(), "Content-Length", "99"), "Transfer-Encoding", "chunked"), "X-A", "1\r\nEvil: 1"), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}) == "POST / HTTP/1.1\r\nconnection: close\r\ncontent-length: 2\r\nhost: h:8080\r\nx-a: 1Evil: 1\r\n\r\n" ++ SCon{Chr{195}, SCon{Chr{169}, SNil{}}} : String}
+  {Http.encode_req("POST", "/", "h:8080", Http.set(Http.set(Http.set(Http.empty(), "Content-Length", "99"), "Transfer-Encoding", "chunked"), "X-A", "1\r\nEvil: 1"), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}) == "POST / HTTP/1.1\r\nconnection: close\r\ncontent-length: 2\r\nhost: h:8080\r\nx-a: 1Evil: 1\r\n\r\n" ++ SCon{Chr{195}, SCon{Chr{169}, SNil{}}} : String}
 
 # What the client sends, the server parses back to the same body.
 law req_roundtrip:
@@ -187,44 +187,44 @@ law req_roundtrip:
 
 # RFC 9110 §15.4.2 note: user agents change POST to GET on 301 and 302; body headers go with the body.
 law redirect_301_post_to_get:
-  {Http.redirect(301, Map.set(&2, String, Http.empty(), "location", "z"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/z"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(301, Http.set(Http.empty(), "location", "z"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/z"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
 
 law redirect_302_get_kept:
-  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "/q?1"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/q?1"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "/q?1"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/q?1"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
 
 # §15.4.4: 303 means GET the new URI.
 law redirect_303_put_to_get:
-  {Http.redirect(303, Map.set(&2, String, Http.empty(), "location", "/done"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/done"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/done"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
 
 law redirect_303_head_kept:
-  {Http.redirect(303, Map.set(&2, String, Http.empty(), "location", "/done"), Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == Some{Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/done"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == Some{Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/done"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
 
 # §15.4.8, §15.4.9: 307 and 308 keep the method and the body.
 law redirect_307_keeps_post:
-  {Http.redirect(307, Map.set(&2, String, Http.empty(), "location", "/v2"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/v2"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(307, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
 
 law redirect_308_keeps_put:
-  {Http.redirect(308, Map.set(&2, String, Http.empty(), "location", "/v2"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/v2"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(308, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
 
 # Credentials never follow a hop to another origin.
 law redirect_cross_origin_drops_creds:
-  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "https://evil.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Http.empty(), "authorization", "t"), "cookie", "c"), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "evil.com", 443, "/"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "https://evil.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.set(Http.empty(), "authorization", "t"), "cookie", "c"), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "evil.com", 443, "/"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
 
 law redirect_same_origin_keeps_creds:
-  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "/b"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/b"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "/b"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/b"}, Http.set(Http.empty(), "authorization", "t"), ""}} : Maybe<&2, Http.Hop>}
 
 # https to http is another origin too.
 law redirect_downgrade_is_cross_origin:
-  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "http://a.com/x/y"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"http", "a.com", 80, "/x/y"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "http://a.com/x/y"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"http", "a.com", 80, "/x/y"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
 
 law redirect_200_none:
-  {Http.redirect(200, Map.set(&2, String, Http.empty(), "location", "/z"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+  {Http.redirect(200, Http.set(Http.empty(), "location", "/z"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
 
 law redirect_no_location_none:
   {Http.redirect(301, Http.empty(), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
 
 law redirect_other_scheme_none:
-  {Http.redirect(301, Map.set(&2, String, Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+  {Http.redirect(301, Http.set(Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
 
 # The hint: the header block is not complete yet.
 law need_head:
@@ -278,3 +278,33 @@ law gate_close_waits:
 # After close, frame always decides.
 law gate_closed_always:
   {Http.fetch.gate(True{}, Http.NeedHead{}, 0n, "") == True{} : Bool}
+
+# A macOS ETIMEDOUT is a timeout, not a connect error.
+law err_timeout_mac:
+  {Http.err.or_late(60, Http.ErrConnect{60, "x"}) == Http.ErrTimeout{} : Http.Err}
+
+# A Linux ETIMEDOUT is a timeout, not a read error.
+law err_timeout_linux:
+  {Http.err.or_late(110, Http.ErrRead{110, ""}) == Http.ErrTimeout{} : Http.Err}
+
+# A TLS failure keeps the verify text the effect already returned.
+law err_tls_keeps_why:
+  {Http.err.or_late(1, Http.ErrTls{1, "expired"}) == Http.ErrTls{1, "expired"} : Http.Err}
+
+# A refused connect keeps the errno.
+law err_connect_keeps_code:
+  {Http.err.or_late(61, Http.ErrConnect{61, ""}) == Http.ErrConnect{61, ""} : Http.Err}
+
+# Repeated Set-Cookie lines stay separate, in order. header() is the first, never a join.
+law set_cookie_kept:
+  {Http.res_fields(Http.parse_res("HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\n\r\n"), "set-cookie") == ["a=1", "b=2"] : List<&2, String>}
+
+law set_cookie_not_joined:
+  {Http.header(Http.add(Http.add(Http.empty(), "set-cookie", "a=1"), "set-cookie", "b=2"), "set-cookie") == "a=1" : String}
+
+# RFC 9110 §5.3: a repeated list field keeps every value.
+law vary_kept:
+  {Http.res_fields(Http.parse_res("HTTP/1.1 200 OK\r\nVary: accept\r\nVary: accept-encoding\r\n\r\n"), "vary") == ["accept", "accept-encoding"] : List<&2, String>}
+
+law set_cookie_lines:
+  {Http.headers_block(Http.add(Http.add(Http.empty(), "set-cookie", "a=1"), "set-cookie", "b=2")) == "\r\nset-cookie: a=1\r\nset-cookie: b=2" : String}

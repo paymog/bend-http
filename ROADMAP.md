@@ -5,18 +5,16 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 ## Current baseline
 
 - Packages on the Elbow registry: `http@0.8.0`, `url@0.3.0`, `json@0.2.0`, `dns@0.2.0`, `wire@0.3.0`, `encoding@0.2.0`, `router@0.1.0`.
-- `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. `fetch.with(..., ms)` sets the timeout. It returns `Maybe<Res>`.
+- `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. `fetch.with(..., ms)` sets the timeout. It returns `Result<Res, Err>`: bad URL, DNS, connect, TLS (errno and verify text), read, write, timeout, too many redirects, or a malformed response. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Headers are a list per name. `header` is the first value. `Set-Cookie` is never joined. Encode writes one line per value.
 - Bodies are byte strings: one `Char` per octet. `Enc.utf8.decode` turns a body into text.
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
-- Laws: http 68, url 56, json 35, dns 15, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
+- Laws: http 76, url 56, json 35, dns 15, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 
 ## Before other people use it
 
 - [ ] **Write a README.** Cover install through Elbow, one `fetch` example, the OpenSSL 3 requirement, native builds for big bodies, and how to run the proofs. Test the steps on a clean machine, including the x86_64 Mac.
 - [ ] **Run proofs and smoke tests in CI.** Run every `PROOF.bend` and `check.bend` on each push. Add a live smoke job (example.com over http and https, badssl.com negatives) that may fail without blocking.
-- [ ] **Say why a fetch failed.** Return `Result<Res, Err>` instead of `Maybe<Res>`, with kinds such as bad URL, DNS, connect, TLS (with the verify reason), timeout, too many redirects, and malformed response. The C and JS effects already produce most of these errors, and `fetch` throws them away.
-- [ ] **Keep repeated header fields.** Headers are a `Map<String>`, so the last `Set-Cookie` or `Vary` wins and the others are lost. Store a list of values, or join with ", " where RFC 9110 §5.3 allows it (never for `Set-Cookie`).
 - [ ] **Fix the server side.** `serve` reads one 8 KiB recv and parses it, so bigger requests are cut off and get a 400. Read requests with the same `need`/`frame` loop the client uses. `response()` writes "OK" for every status; use the right reason phrase. The server accepts only `HTTP/1.1` request lines.
 - [ ] **Fail fast on malformed responses.** A bad chunk or bad framing on an open connection returns `More` and waits until close or timeout. Make `frame` return `Bad` as soon as the bytes cannot become a valid message. Add laws for that.
 - [ ] **Detect TLS truncation.** `SSL_OP_IGNORE_UNEXPECTED_EOF` treats a bare EOF as close. A close-delimited body over TLS can therefore be cut short without an error. Content-Length and chunked bodies are safe. Fail when a close-delimited TLS body ends without `close_notify`.
