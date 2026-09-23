@@ -307,43 +307,77 @@ def ipv4.go(s: String) -> Bool:
 def ipv4(+s: String) -> Bool:
   Bool.and(Bool.not(String.is_empty(s)), ipv4.go(s))
 
-def resolve.from(s: Socket, +ns: String, id: U32, hpd: String & U32 & String) -> IO(Maybe<&2, String>):
+# One attempt's outcome: try again, or this answer (None: no address).
+type Try is Data:
+  Again{}
+  Got{ip: Maybe<&2, String>}
+
+def try.pure(s: Socket, t: Try) -> IO(Socket & Try):
+  IO.pure(Socket & Try, (s, t))
+
+# A datagram from anyone but the nameserver's port 53 is ignored (retried).
+def try.from(s: Socket, +ns: String, id: U32, hpd: String & U32 & String) -> IO(Socket & Try):
   (h, +p, d) = hpd
+  try.pure(s, Bool.pick(Try, Bool.and(String.eq(h, ns), U32.is_eq(p, 53)), Got{answer(id, d)}, Again{}))
+
+def try.back(ns: String, id: U32, m: Socket & Result<&1, &1, U32 & String, String & U32 & String>) -> IO(Socket & Try):
+  (s, r) = m
+  match r:
+    case Fail{e}:
+      try.pure(s, Again{})
+    case Done{hpd}:
+      try.from(s, ns, id, hpd)
+
+# §4.2.1 and resolv.conf defaults: 5 s per attempt.
+def try.sent(ns: String, id: U32, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Socket & Try):
+  (s, r) = m
+  match r:
+    case Fail{e}:
+      try.pure(s, Again{})
+    case Done{u}:
+      do IO<Socket & Try>:
+        back : Socket & Result<&1, &1, U32 & String, String & U32 & String> <- Wire.recv_from(s, 512, 5000)
+        try.back(ns, id, back)
+
+def try.once(s: Socket, +ns: String, id: U32, q: String) -> IO(Socket & Try):
+  do IO<Socket & Try>:
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send_to(s, ns, 53, q)
+    try.sent(ns, id, sent)
+
+def try.close(s: Socket, r: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   do IO<Maybe<&2, String>>:
     Socket.close(s)
-    return Bool.pick(Maybe<&2, String>, Bool.and(String.eq(h, ns), U32.is_eq(p, 53)), answer(id, d), None{})
+    return r
 
-# ponytail: waits forever for one datagram; timeout + retry land with the Timeouts phase
-def resolve.back(ns: String, id: U32, m: Socket & Result<&1, &1, U32 & String, String & U32 & String>) -> IO(Maybe<&2, String>):
-  (s, r) = m
-  match r:
-    case Fail{e}:
-      do IO<Maybe<&2, String>>:
-        Socket.close(s)
-        none()
-    case Done{hpd}:
-      resolve.from(s, ns, id, hpd)
+def tries.end(st: Socket & Try) -> IO(Maybe<&2, String>):
+  (s, t) = st
+  match t:
+    case Got{ip}:
+      try.close(s, ip)
+    case Again{}:
+      try.close(s, None{})
 
-def resolve.sent(ns: String, id: U32, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, String>):
-  (s, r) = m
-  match r:
-    case Fail{e}:
-      do IO<Maybe<&2, String>>:
-        Socket.close(s)
-        none()
-    case Done{u}:
-      do IO<Maybe<&2, String>>:
-        back : Socket & Result<&1, &1, U32 & String, String & U32 & String> <- Wire.recv_from(s, 512)
-        resolve.back(ns, id, back)
+# fuel: attempts left (resolv.conf's default is 2).
+def tries(fuel: Nat, +ns: String, +id: U32, +q: String, st: Socket & Try) -> IO(Maybe<&2, String>):
+  match fuel:
+    case 0n:
+      tries.end(st)
+    case 1n+f:
+      (s, t) = st
+      match t:
+        case Got{ip}:
+          try.close(s, ip)
+        case Again{}:
+          do IO<Maybe<&2, String>>:
+            next : Socket & Try <- try.once(s, ns, id, q)
+            tries(f, ns, id, q, next)
 
-def resolve.sock(+ns: String, id: U32, q: String, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, String>):
+def resolve.sock(ns: String, id: U32, q: String, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, String>):
   match r:
     case Fail{e}:
       none()
     case Done{s}:
-      do IO<Maybe<&2, String>>:
-        sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send_to(s, ns, 53, q)
-        resolve.sent(ns, id, sent)
+      tries(2n, ns, id, q, (s, Again{}))
 
 def resolve.q(ns: String, id: U32, q: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   match q:

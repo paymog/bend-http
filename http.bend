@@ -814,12 +814,12 @@ def redirect(+status: U32, +headers: Map<&2, String>, h: Hop) -> Maybe<&2, Hop>:
   redirect.if(status, h, header(headers, "location"), Bool.and(redirect.code(status), has_header(headers, "location")))
 
 # Transport: plain TCP or TLS over the same socket.
-def io.recv(tls: Bool, s: Socket, max: U32) -> IO(Socket & Result<&1, &1, U32 & String, String>):
+def io.recv(tls: Bool, s: Socket, max: U32, ms: U32) -> IO(Socket & Result<&1, &1, U32 & String, String>):
   match tls:
     case True{}:
-      Wire.tls.recv(s, max)
+      Wire.tls.recv(s, max, ms)
     case False{}:
-      Wire.recv(s, max)
+      Wire.recv(s, max, ms)
 
 def io.send(tls: Bool, s: Socket, data: String) -> IO(Socket & Result<&1, &1, U32 & String, Unit>):
   match tls:
@@ -923,89 +923,89 @@ def fetch.next(head: Bool, rd: Rd, m: Socket & Result<&1, &1, U32 & String, Stri
 
 # Reads until frame says Done or Bad; an empty recv means the server closed.
 @unsafe
-def fetch.read(+head: Bool, +tls: Bool, st: Socket & Rd) -> IO(Maybe<&2, Res>):
+def fetch.read(+head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Maybe<&2, Res>):
   (s, rd) = st
   Rd{rbuf, n, need, f} = rd
   match f:
     case FrameMore{}:
       do IO<Maybe<&2, Res>>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536)
-        fetch.read(head, tls, fetch.next(head, Rd{rbuf, n, need, FrameMore{}}, m))
+        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
+        fetch.read(head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}}, m))
     case FrameBad{}:
       fetch.close(tls, s, None{})
     case FrameDone{res}:
       fetch.close(tls, s, Some{res})
 
-def fetch.sent(head: Bool, tls: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+def fetch.sent(head: Bool, tls: Bool, ms: U32, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
   match r:
     case Fail{e}:
       fetch.close(tls, s, None{})
     case Done{u}:
-      fetch.read(head, tls, (s, Rd{"", 0n, NeedHead{}, FrameMore{}}))
+      fetch.read(head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}}))
 
-def fetch.send(head: Bool, +tls: Bool, s: Socket, wire: String) -> IO(Maybe<&2, Res>):
+def fetch.send(head: Bool, +tls: Bool, ms: U32, s: Socket, wire: String) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
-    fetch.sent(head, tls, sent)
+    fetch.sent(head, tls, ms, sent)
 
 # A failed handshake (bad chain, wrong host, no OpenSSL) is None, never plaintext.
-def fetch.shook(head: Bool, wire: String, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
+def fetch.shook(head: Bool, ms: U32, wire: String, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Maybe<&2, Res>):
   (s, r) = m
   match r:
     case Fail{e}:
       fetch.close(True{}, s, None{})
     case Done{u}:
-      fetch.send(head, True{}, s, wire)
+      fetch.send(head, True{}, ms, s, wire)
 
-def fetch.secure(head: Bool, sni: String, wire: String, c: Socket, tls: Bool) -> IO(Maybe<&2, Res>):
+def fetch.secure(head: Bool, +ms: U32, sni: String, wire: String, c: Socket, tls: Bool) -> IO(Maybe<&2, Res>):
   match tls:
     case False{}:
-      fetch.send(head, False{}, c, wire)
+      fetch.send(head, False{}, ms, c, wire)
     case True{}:
       do IO<Maybe<&2, Res>>:
-        hs : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.tls.connect(c, sni)
-        fetch.shook(head, wire, hs)
+        hs : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.tls.connect(c, sni, ms)
+        fetch.shook(head, ms, wire, hs)
 
-def fetch.conn(head: Bool, sni: String, wire: String, tls: Bool, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, Res>):
+def fetch.conn(head: Bool, ms: U32, sni: String, wire: String, tls: Bool, r: Result<&1, &1, U32 & String, Socket>) -> IO(Maybe<&2, Res>):
   match r:
     case Fail{e}:
       fetch.none()
     case Done{c}:
-      fetch.secure(head, sni, wire, c, tls)
+      fetch.secure(head, ms, sni, wire, c, tls)
 
 # One request on one connection to an IPv4 address. Bodies are byte strings.
-def fetch.ip(+method: String, ip: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool) -> IO(Maybe<&2, Res>):
+def fetch.ip(+method: String, ip: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool, +ms: U32) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
-    c : Result<&1, &1, U32 & String, Socket> <- TCP.connect(ip, port)
-    fetch.conn(String.eq(method, "HEAD"), sni, encode_req(method, target, hf, headers, body), tls, c)
+    c : Result<&1, &1, U32 & String, Socket> <- Wire.connect(ip, port, ms)
+    fetch.conn(String.eq(method, "HEAD"), ms, sni, encode_req(method, target, hf, headers, body), tls, c)
 
-def fetch.addr(method: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool, ip: Maybe<&2, String>) -> IO(Maybe<&2, Res>):
+def fetch.addr(method: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool, ms: U32, ip: Maybe<&2, String>) -> IO(Maybe<&2, Res>):
   match ip:
     case None{}:
       fetch.none()
     case Some{addr}:
-      fetch.ip(method, addr, port, sni, hf, target, headers, body, tls)
+      fetch.ip(method, addr, port, sni, hf, target, headers, body, tls, ms)
 
-def fetch.dns(method: String, +host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool) -> IO(Maybe<&2, Res>):
+def fetch.dns(method: String, +host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, tls: Bool, ms: U32) -> IO(Maybe<&2, Res>):
   do IO<Maybe<&2, Res>>:
     ip : Maybe<&2, String> <- Dns.resolve(host)
-    fetch.addr(method, port, host, hf, target, headers, body, tls, ip)
+    fetch.addr(method, port, host, hf, target, headers, body, tls, ms, ip)
 
-def fetch.scheme(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, +scheme: String, known: Bool) -> IO(Maybe<&2, Res>):
+def fetch.scheme(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, String>, body: String, ms: U32, +scheme: String, known: Bool) -> IO(Maybe<&2, Res>):
   match known:
     case False{}:
       fetch.none()
     case True{}:
-      fetch.dns(method, host, port, hf, target, headers, body, String.eq(scheme, "https"))
+      fetch.dns(method, host, port, hf, target, headers, body, String.eq(scheme, "https"), ms)
 
-def fetch.abs(method: String, headers: Map<&2, String>, body: String, hf: String, a: Url.Abs) -> IO(Maybe<&2, Res>):
+def fetch.abs(method: String, headers: Map<&2, String>, body: String, ms: U32, hf: String, a: Url.Abs) -> IO(Maybe<&2, Res>):
   Url.Abs{+scheme, host, port, target} = a
-  fetch.scheme(method, host, port, hf, target, headers, body, scheme, Bool.or(String.eq(scheme, "http"), String.eq(scheme, "https")))
+  fetch.scheme(method, host, port, hf, target, headers, body, ms, scheme, Bool.or(String.eq(scheme, "http"), String.eq(scheme, "https")))
 
-def fetch.one(h: Hop) -> IO(Maybe<&2, Res>):
+def fetch.one(h: Hop, ms: U32) -> IO(Maybe<&2, Res>):
   Hop{method, +url, headers, body} = h
-  fetch.abs(method, headers, body, Url.host_field(url), url)
+  fetch.abs(method, headers, body, ms, Url.host_field(url), url)
 
 type Next is Data:
   NDone{res: Maybe<&2, Res>}
@@ -1030,7 +1030,7 @@ def fetch.decide(h: Hop, m: Maybe<&2, Res>) -> Next:
       fetch.decide.res(h, r)
 
 # fuel: the first request plus up to 20 redirects (WHATWG fetch's limit); past that, None.
-def fetch.hops(fuel: Nat, st: Next) -> IO(Maybe<&2, Res>):
+def fetch.hops(fuel: Nat, +ms: U32, st: Next) -> IO(Maybe<&2, Res>):
   match fuel:
     case 0n:
       fetch.none()
@@ -1040,8 +1040,8 @@ def fetch.hops(fuel: Nat, st: Next) -> IO(Maybe<&2, Res>):
           IO.pure(Maybe<&2, Res>, m)
         case NHop{+h}:
           do IO<Maybe<&2, Res>>:
-            m : Maybe<&2, Res> <- fetch.one(h)
-            fetch.hops(f, fetch.decide(h, m))
+            m : Maybe<&2, Res> <- fetch.one(h, ms)
+            fetch.hops(f, ms, fetch.decide(h, m))
 
 def fetch.start(method: String, headers: Map<&2, String>, body: String, u: Maybe<&2, Url.Abs>) -> Next:
   match u:
@@ -1052,9 +1052,14 @@ def fetch.start(method: String, headers: Map<&2, String>, body: String, u: Maybe
 
 # fetch("GET", "https://example.com/x?y=1", headers, body) follows redirects.
 # None on a bad URL, a failed lookup, connect or handshake, a malformed
-# response, or more than 20 redirects. Body and response body are bytes.
+# response, more than 20 redirects, or a step (connect, handshake, one read)
+# that takes longer than ms. Body and response body are bytes.
+def fetch.with(method: String, url: String, headers: Map<&2, String>, body: String, ms: U32) -> IO(Maybe<&2, Res>):
+  fetch.hops(21n, ms, fetch.start(method, headers, body, Url.absolute(url)))
+
+# fetch.with and a 30 s step timeout.
 def fetch(method: String, url: String, headers: Map<&2, String>, body: String) -> IO(Maybe<&2, Res>):
-  fetch.hops(21n, fetch.start(method, headers, body, Url.absolute(url)))
+  fetch.with(method, url, headers, body, 30000)
 
 def get(url: String) -> IO(String):
   do IO<String>:
@@ -1095,7 +1100,7 @@ def reply(~h: Req -> IO(Res), m: Socket & Result<&1, &1, U32 & String, String>) 
 
 def talk(~h: Req -> IO(Res), s: Socket) -> IO(Unit):
   do IO<Unit>:
-    read : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 8192)
+    read : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 8192, 30000)
     reply(~h, read)
 
 def conn(~h: Req -> IO(Res), m: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Listener):

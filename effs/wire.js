@@ -23,17 +23,34 @@ function wire_octets(data) {
   return b;
 }
 
-function recv(socket, max, k) {
+// A deadline in performance.now() ms, or undefined for none.
+function wire_deadline(ms) {
+  return Number(ms) ? performance.now() + Number(ms) : undefined;
+}
+
+function wire_late(at) {
+  return at !== undefined && performance.now() >= at;
+}
+
+function wire_timedout() {
+  return io_sys().mac ? 60 : 110;
+}
+
+function recv(socket, max, ms, k) {
   const sys = io_sys();
   const fd = socket;
   const b = new Uint8Array(Math.max(Number(max), 1));
   const again = sys.mac ? 35 : 11;
+  const at = wire_deadline(ms);
   const go = () => {
     const n = Number(sys.recv(fd, sys.ptr(b), Number(max), 0));
     if (n < 0) {
       const code = sys.errno();
       if (code === again) {
-        io_park_on(fd, false, k, go);
+        if (wire_late(at)) {
+          return io_tup(socket, io_fail(wire_timedout()));
+        }
+        io_park_on(fd, false, k, go, at);
         return undefined;
       }
       return io_tup(socket, io_fail(code));
@@ -43,9 +60,6 @@ function recv(socket, max, k) {
   return go();
 }
 
-function recv_need() {
-  return { read: true };
-}
 
 function send(socket, data, k) {
   const sys = io_sys();
@@ -74,19 +88,23 @@ function send(socket, data, k) {
   return go(0);
 }
 
-function recv_from(socket, max, k) {
+function recv_from(socket, max, ms, k) {
   const sys = io_sys();
   const fd = socket;
   const b = new Uint8Array(Math.max(Number(max), 1));
   const peer = new Uint8Array(16);
   const len = new Uint32Array([16]);
+  const deadline = wire_deadline(ms);
   const go = () => {
     const n = Number(sys.recvfrom(fd, sys.ptr(b), Number(max), 0, sys.ptr(peer),
       sys.ptr(len)));
     if (n < 0) {
       const code = sys.errno();
       if (code === (sys.mac ? 35 : 11)) {
-        io_park_on(fd, false, k, go);
+        if (wire_late(deadline)) {
+          return io_tup(socket, io_fail(wire_timedout()));
+        }
+        io_park_on(fd, false, k, go, deadline);
         return undefined;
       }
       return io_tup(socket, io_fail(code));
@@ -98,9 +116,6 @@ function recv_from(socket, max, k) {
   return go();
 }
 
-function recv_from_need() {
-  return { read: true };
-}
 
 function send_to(socket, host, port, data, k) {
   const sys = io_sys();
@@ -176,7 +191,8 @@ function wire_cstr(t, text) {
   return { b, p: t.ffi.ptr(b) };
 }
 
-function tls_connect(socket, host, k) {
+function tls_connect(socket, host, ms, k) {
+  const at = wire_deadline(ms);
   const t = wire_tls();
   if (t === null) {
     return io_tup(socket, { $: "Fail", error: io_tup(2,
@@ -206,7 +222,12 @@ function tls_connect(socket, host, k) {
     }
     const err = s.SSL_get_error(ssl, r);
     if (err === 2 || err === 3) {
-      io_park_on(fd, err === 3, k, go);
+      if (wire_late(at)) {
+        s.SSL_free(ssl);
+        t.by.delete(fd);
+        return io_tup(socket, io_fail(wire_timedout()));
+      }
+      io_park_on(fd, err === 3, k, go, at);
       return undefined;
     }
     const v = s.SSL_get_verify_result(ssl);
@@ -244,7 +265,8 @@ function tls_send(socket, data, k) {
   return go(0);
 }
 
-function tls_recv(socket, max, k) {
+function tls_recv(socket, max, ms, k) {
+  const at = wire_deadline(ms);
   const t = wire_tls();
   const ssl = t && t.by.get(socket);
   if (!ssl) {
@@ -258,7 +280,10 @@ function tls_recv(socket, max, k) {
     }
     const err = t.s.SSL_get_error(ssl, n);
     if (err === 2 || err === 3) {
-      io_park_on(socket, err === 3, k, go);
+      if (wire_late(at)) {
+        return io_tup(socket, io_fail(wire_timedout()));
+      }
+      io_park_on(socket, err === 3, k, go, at);
       return undefined;
     }
     if (err === 6) {
@@ -269,9 +294,6 @@ function tls_recv(socket, max, k) {
   return go();
 }
 
-function tls_recv_need() {
-  return { read: true };
-}
 
 function tls_close(socket) {
   const t = wire_tls();
@@ -283,4 +305,55 @@ function tls_close(socket) {
   }
   io_sys().close(socket);
   return { $: "Unit" };
+}
+
+// Twin of connect in wire.c: a TCP connect with a deadline.
+function connect(host, port, ms, k) {
+  const sys = io_sys();
+  const addr = io_addr(host, Number(port));
+  if (addr === null) {
+    return io_fail(22);
+  }
+  const fd = sys.socket(2, 1, 0);
+  if (fd < 0) {
+    return io_fail(sys.errno());
+  }
+  const at = wire_deadline(ms);
+  const end = (code) => {
+    if (code !== 0) {
+      sys.close(fd);
+      return io_fail(code);
+    }
+    return io_done(fd);
+  };
+  const error = () => {
+    const v = new Int32Array([0]);
+    const l = new Uint32Array([4]);
+    return sys.getsockopt(fd, sys.mac ? 0xffff : 1, sys.mac ? 0x1007 : 4,
+      sys.ptr(v), sys.ptr(l)) < 0 ? sys.errno() : v[0];
+  };
+  if (sys.fcntl(fd, 4, sys.fcntl(fd, 3, 0) | (sys.mac ? 4 : 0x800)) < 0) {
+    return end(sys.errno());
+  }
+  const pending = [sys.mac ? 36 : 115, sys.mac ? 37 : 114];
+  const done = sys.mac ? 56 : 106;
+  const go = () => {
+    const failed = error();
+    if (failed !== 0) {
+      return end(failed);
+    }
+    const code = sys.connect(fd, sys.ptr(addr), 16) >= 0 ? 0 : sys.errno();
+    if (code === 0 || code === done) {
+      return end(0);
+    }
+    if (pending.includes(code)) {
+      if (wire_late(at)) {
+        return end(wire_timedout());
+      }
+      io_park_on(fd, true, k, go, at);
+      return undefined;
+    }
+    return end(code);
+  };
+  return go();
 }

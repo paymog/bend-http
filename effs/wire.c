@@ -47,18 +47,32 @@ static char* wire_octets(Env e, Term s, u64* len, bool* bad) {
   return buf;
 }
 
+// A deadline in io_tick() nanoseconds, or 0 for none.
+static u64 wire_deadline(u64 ms) {
+  return ms != 0 ? io_tick() + ms * 1000000ull : 0;
+}
+
+static bool wire_late(u64 at) {
+  return at != 0 && io_tick() >= at;
+}
+
 #endif
 
 #ifdef CID_RECV
 
+// Not IO_READ: that would wait for readability before run, with no deadline.
+// w->size holds the deadline until the read lands.
 static Term wire_recv_more(Env e, IoWork* w) {
-  int fd  = (int)w->hand;
-  w->size = io_sys_end(w, recv(fd, w->data, (size_t)w->made, 0));
+  int     fd = (int)w->hand;
+  ssize_t n  = io_sys_end(w, recv(fd, w->data, (size_t)w->made, 0));
   if (w->code == EAGAIN) {
-    return io_wait_on(w, fd, POLLIN, 0, wire_recv_more);
+    if (!wire_late(w->size)) {
+      return io_wait_on(w, fd, POLLIN, w->size, wire_recv_more);
+    }
+    w->code = ETIMEDOUT;
   }
   Term r = w->code ? io_fail(e, w->code, NULL)
-    : io_done(e, wire_bytes(e, w->data, w->size));
+    : io_done(e, wire_bytes(e, w->data, (u64)n));
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
 }
@@ -67,11 +81,12 @@ Term wire_recv_run(Env e, Term* f, IoWork* w) {
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->made = f[1] < INT32_MAX ? (intptr_t)f[1] : INT32_MAX;
   w->data = io_mem(malloc((size_t)w->made + 1));
+  w->size = wire_deadline((u64)f[2]);
   return wire_recv_more(e, w);
 }
 
 static void __attribute__((constructor)) wire_recv_use(void) {
-  io_eff(CID_RECV, wire_recv_run, IO_READ);
+  io_eff(CID_RECV, wire_recv_run, 0);
 }
 
 #endif
@@ -115,15 +130,18 @@ static Term wire_recv_from_more(Env e, IoWork* w) {
   socklen_t alen = sizeof(at);
   char      host[16];
   int       fd = (int)w->hand;
-  w->size = io_sys_end(w, recvfrom(fd, w->data, (size_t)w->made, 0,
+  ssize_t   n  = io_sys_end(w, recvfrom(fd, w->data, (size_t)w->made, 0,
     (struct sockaddr*)&at, &alen));
   if (w->code == EAGAIN) {
-    return io_wait_on(w, fd, POLLIN, 0, wire_recv_from_more);
+    if (!wire_late(w->size)) {
+      return io_wait_on(w, fd, POLLIN, w->size, wire_recv_from_more);
+    }
+    w->code = ETIMEDOUT;
   }
   inet_ntop(AF_INET, &at.sin_addr, host, 16);
   Term r = w->code ? io_fail(e, w->code, NULL)
     : io_done(e, io_tup(e, io_str(e, host, strlen(host)),
-      io_tup(e, ntohs(at.sin_port), wire_bytes(e, w->data, w->size))));
+      io_tup(e, ntohs(at.sin_port), wire_bytes(e, w->data, (u64)n))));
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
 }
@@ -132,11 +150,12 @@ Term wire_recv_from_run(Env e, Term* f, IoWork* w) {
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->made = f[1] < INT32_MAX ? (intptr_t)f[1] : INT32_MAX;
   w->data = io_mem(malloc((size_t)w->made + 1));
+  w->size = wire_deadline((u64)f[2]);
   return wire_recv_from_more(e, w);
 }
 
 static void __attribute__((constructor)) wire_recv_from_use(void) {
-  io_eff(CID_RECV_FROM, wire_recv_from_run, IO_READ);
+  io_eff(CID_RECV_FROM, wire_recv_from_run, 0);
 }
 
 #endif
@@ -175,6 +194,71 @@ Term wire_send_to_run(Env e, Term* f, IoWork* w) {
 
 static void __attribute__((constructor)) wire_send_to_use(void) {
   io_eff(CID_SEND_TO, wire_send_to_run, 0);
+}
+
+#endif
+
+#ifdef CID_CONNECT
+
+// Base's TCP.connect waits as long as the kernel does (~75 s); this one has a
+// deadline. On each wake SO_ERROR reports a failure, and connect() again says
+// EALREADY (still going) or EISCONN (done).
+static Term wire_connect_end(Env e, IoWork* w, int err) {
+  int fd = (int)w->hand;
+  if (err != 0 && fd >= 0) {
+    close(fd);
+  }
+  free(w->data);
+  return err != 0 ? io_fail(e, (u32)err, NULL) : io_done(e, io_hand(fd));
+}
+
+static Term wire_connect_more(Env e, IoWork* w) {
+  struct sockaddr_in at;
+  int       fd  = (int)w->hand;
+  int       err = 0;
+  socklen_t len = sizeof(err);
+  if (getsockopt(fd, SOL_SOCKET, SO_ERROR, &err, &len) != 0) {
+    err = errno;
+  }
+  if (err == 0) {
+    io_sys_addr(w->data, (u32)w->made, &at);
+    err = connect(fd, (struct sockaddr*)&at, sizeof(at)) == 0 ? 0 : errno;
+  }
+  if (err == 0 || err == EISCONN) {
+    return wire_connect_end(e, w, 0);
+  }
+  if (err == EINPROGRESS || err == EALREADY) {
+    if (!wire_late(w->size)) {
+      return io_wait_on(w, fd, POLLOUT, w->size, wire_connect_more);
+    }
+    err = ETIMEDOUT;
+  }
+  return wire_connect_end(e, w, err);
+}
+
+Term connect_run(Env e, Term* f, IoWork* w) {
+  struct sockaddr_in at;
+  u64 hn  = 0;
+  w->data = io_cstr(e, f[0], &hn);
+  w->made = (intptr_t)f[1];
+  w->hand = -1;
+  if (io_nul(w->data, hn) || io_sys_addr(w->data, (u32)w->made, &at) != 0) {
+    return wire_connect_end(e, w, EINVAL);
+  }
+  int fd = socket(AF_INET, SOCK_STREAM, 0);
+  if (fd < 0) {
+    return wire_connect_end(e, w, errno);
+  }
+  w->hand = fd;
+  if (fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK) < 0) {
+    return wire_connect_end(e, w, errno);
+  }
+  w->size = wire_deadline((u64)f[2]);
+  return wire_connect_more(e, w);
+}
+
+static void __attribute__((constructor)) connect_use(void) {
+  io_eff(CID_CONNECT, connect_run, 0);
 }
 
 #endif
@@ -306,7 +390,10 @@ static Term wire_tls_connect_more(Env e, IoWork* w) {
   }
   int err = wire_tls.get_error(ssl, r);
   if (err == 2 || err == 3) {  // SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
-    return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, 0, wire_tls_connect_more);
+    if (!wire_late(w->size)) {
+      return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, w->size, wire_tls_connect_more);
+    }
+    return wire_tls_connect_fail(e, w, ETIMEDOUT, NULL);
   }
   long v = wire_tls.verify_result(ssl);
   return wire_tls_connect_fail(e, w, EPROTO, v != 0 ? wire_tls.verify_text(v) : "TLS handshake failed");
@@ -316,6 +403,7 @@ Term tls_connect_run(Env e, Term* f, IoWork* w) {
   uint64_t hn = 0;
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->text = io_cstr(e, f[1], &hn);
+  w->size = wire_deadline((u64)f[2]);
   int fd  = (int)w->hand;
   if (!wire_tls_load()) {
     return wire_tls_connect_end(e, w, io_fail(e, ENOENT, "TLS needs OpenSSL 3 (libssl.3); set BEND_LIBSSL to its path"));
@@ -399,9 +487,13 @@ static Term wire_tls_recv_more(Env e, IoWork* w) {
   } else {
     int err = ssl != NULL ? wire_tls.get_error(ssl, n) : 1;
     if (err == 2 || err == 3) {
-      return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, 0, wire_tls_recv_more);
+      if (!wire_late(w->size)) {
+        return io_wait_on(w, fd, err == 2 ? POLLIN : POLLOUT, w->size, wire_tls_recv_more);
+      }
+      err = -1;
     }
     r = err == 6 ? io_done(e, term_pak(CID_SNIL, 0))  // SSL_ERROR_ZERO_RETURN
+      : err == -1 ? io_fail(e, ETIMEDOUT, NULL)
       : io_fail(e, ssl != NULL ? EIO : EBADF, ssl != NULL ? "TLS read failed" : NULL);
   }
   free(w->data);
@@ -412,11 +504,12 @@ Term tls_recv_run(Env e, Term* f, IoWork* w) {
   w->hand = (intptr_t)io_hand_v(f[0]);
   w->made = f[1] < INT32_MAX ? (intptr_t)f[1] : INT32_MAX;
   w->data = io_mem(malloc((size_t)w->made + 1));
+  w->size = wire_deadline((u64)f[2]);
   return wire_tls_recv_more(e, w);
 }
 
 static void __attribute__((constructor)) tls_recv_use(void) {
-  io_eff(CID_TLS_RECV, tls_recv_run, IO_READ);
+  io_eff(CID_TLS_RECV, tls_recv_run, 0);
 }
 
 #endif
