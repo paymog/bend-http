@@ -1,5 +1,6 @@
 # HTTP/1.1 client for http and https, with DNS and TLS.
 import Base
+import ./about.bend as About
 import ./wire.bend as Wire
 import ./dns/dns.bend as Dns
 import ./url/url.bend as Url
