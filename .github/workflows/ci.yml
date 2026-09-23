@@ -1,0 +1,32 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  proofs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Bend
+        run: curl -fsSL https://bend-lang.com/install.sh | sh
+        env:
+          BEND_NO_TELEMETRY: "1"
+      - name: Run proofs and checks
+        env:
+          BEND_NO_TELEMETRY: "1"
+        run: |
+          export PATH="$HOME/.bend/bin:$PATH"
+          bend PROOF.bend
+          bend check.bend
+          for d in url json dns encoding router; do
+            (cd "$d" && bend PROOF.bend)
+          done
+          for f in url json encoding router; do
+            bend "$f/check.bend"
+          done
