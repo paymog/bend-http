@@ -323,3 +323,135 @@ def abs.port.dflt(m: Maybe<&2, U32>) -> U32:
 def host_field(a: Abs) -> String:
   Abs{+scheme, +host, +port, target} = a
   Bool.pick(String, U32.is_eq(port, abs.port.dflt(default_port(scheme))), host, host ++ ":" ++ U32.show(port))
+
+# Reference resolution (RFC 3986 §5.2) for Location headers.
+# ----------------------------------------------------------
+
+def dots.pop(stack: List<&2, String>) -> List<&2, String>:
+  match stack:
+    case Nil{}:
+      Nil{}
+    case Con{h, t}:
+      t
+
+def dots.push(seg: String, stack: List<&2, String>, dot: Bool, up: Bool) -> List<&2, String>:
+  match dot:
+    case True{}:
+      stack
+    case False{}:
+      match up:
+        case True{}:
+          dots.pop(stack)
+        case False{}:
+          Con{seg, stack}
+
+def dots.join(xs: List<&2, String>, acc: String) -> String:
+  match xs:
+    case Nil{}:
+      acc
+    case Con{h, t}:
+      dots.join(t, "/" ++ h ++ acc)
+
+# stack is reversed; trail: the last segment was "." or "..", so a "/" ends the path.
+def dots.go(segs: List<&2, String>, stack: List<&2, String>, trail: Bool) -> String:
+  match segs:
+    case Nil{}:
+      +out = dots.join(stack, "")
+      Bool.pick(String, Bool.and(trail, Bool.not(String.is_empty(out))), out ++ "/", Bool.pick(String, String.is_empty(out), "/", out))
+    case Con{+seg, t}:
+      +dot = String.eq(seg, ".")
+      +up = String.eq(seg, "..")
+      dots.go(t, dots.push(seg, stack, dot, up), Bool.or(dot, up))
+
+def dots.abs(xs: List<&2, String>) -> String:
+  match xs:
+    case Nil{}:
+      "/"
+    case Con{lead, t}:
+      dots.go(t, Nil{}, False{})
+
+# §5.2.4 for an absolute path: "." and ".." segments go away.
+def remove_dots(path: String) -> String:
+  dots.abs(String.split(path, '/'))
+
+def dir.go(s: String, +acc: String, last: String) -> String:
+  match s:
+    case SNil{}:
+      String.reverse(last)
+    case SCon{Chr{+c}, t}:
+      +acc2 = {SCon{Chr{c}, acc} : String}
+      dir.go(t, acc2, Bool.pick(String, U32.is_eq(c, 47), acc2, last))
+
+# §5.2.3: the base path up to and including its last "/".
+def dir(path: String) -> String:
+  dir.go(path, SNil{}, SNil{})
+
+def with_q(path: String, q: String, has_q: Bool) -> String:
+  match has_q:
+    case True{}:
+      path ++ "?" ++ q
+    case False{}:
+      path
+
+def res.build(scheme: String, host: String, port: U32, path: String, q: String, has_q: Bool) -> Maybe<&2, Abs>:
+  Some{Abs{scheme, host, port, with_q(path, q, has_q)}}
+
+# A path, its query, and whether a "?" was present at all.
+type PQ is Data:
+  PQ{path: String, q: String, has_q: Bool}
+
+def res.pq(pq: String & String, has_q: Bool) -> PQ:
+  (p, q) = pq
+  PQ{p, q, has_q}
+
+def res.ref(+r: String) -> PQ:
+  res.pq(take_to(r, 63), has(r, 63))
+
+# §5.2.2: an empty path keeps the base path (and its query unless one is given);
+# "/..." replaces the path; anything else merges with the base directory.
+def res.rel.go(+scheme: String, +host: String, +port: U32, +bpath: String, +bq: String, +bhas: Bool, +rp: String, +q: String, +rhas: Bool) -> Maybe<&2, Abs>:
+  Bool.pick(Maybe<&2, Abs>, String.is_empty(rp),
+    Bool.pick(Maybe<&2, Abs>, rhas, res.build(scheme, host, port, bpath, q, True{}), res.build(scheme, host, port, bpath, bq, bhas)),
+    res.build(scheme, host, port, remove_dots(Bool.pick(String, String.starts_with(rp, "/"), rp, dir(bpath) ++ rp)), q, rhas))
+
+def res.rel(scheme: String, host: String, port: U32, bpath: String, bq: String, bhas: Bool, r: PQ) -> Maybe<&2, Abs>:
+  PQ{rp, q, rhas} = r
+  res.rel.go(scheme, host, port, bpath, bq, bhas, rp, q, rhas)
+
+def res.base(+r: String, b: PQ, a: Abs) -> Maybe<&2, Abs>:
+  PQ{bpath, bq, bhas} = b
+  Abs{scheme, host, port, target} = a
+  res.rel(scheme, host, port, bpath, bq, bhas, res.ref(abs.fst(take_to(r, 35))))
+
+def res.local(+r: String, a: Abs) -> Maybe<&2, Abs>:
+  Abs{+scheme, +host, +port, +target} = a
+  res.base(r, res.ref(target), Abs{scheme, host, port, target})
+
+def abs.scheme_of(a: Abs) -> String:
+  Abs{scheme, host, port, target} = a
+  scheme
+
+def res.net(+r: String, a: Abs, net: Bool) -> Maybe<&2, Abs>:
+  match net:
+    case True{}:
+      absolute(abs.scheme_of(a) ++ ":" ++ r)
+    case False{}:
+      res.local(r, a)
+
+def scheme.ok(s: String) -> Bool:
+  match s:
+    case SNil{}:
+      True{}
+    case SCon{Chr{+c}, t}:
+      Bool.and(Bool.or(Bool.or(Bool.and(U32.is_le(97, c), U32.is_le(c, 122)), Bool.and(U32.is_le(65, c), U32.is_le(c, 90))), Bool.or(Bool.and(U32.is_le(48, c), U32.is_le(c, 57)), Bool.or(U32.is_eq(c, 43), Bool.or(U32.is_eq(c, 45), U32.is_eq(c, 46))))), scheme.ok(t))
+
+# §3.1: a ":" before any "/", "?" or "#" with a valid scheme name before it.
+def abs.has_scheme(+pre: String, colon: Bool) -> Bool:
+  Bool.and(colon, Bool.and(Bool.not(String.is_empty(pre)), scheme.ok(pre)))
+# ref against base: absolute http(s) URLs as is, "//host...", "/path", "?q",
+# or a relative path. Other schemes are None (fetch cannot follow them).
+def resolve(a: Abs, +ref: String) -> Maybe<&2, Abs>:
+  +low = String.to_lower(ref)
+  Bool.pick(Maybe<&2, Abs>, Bool.or(String.starts_with(low, "http://"), String.starts_with(low, "https://")), absolute(ref),
+    Bool.pick(Maybe<&2, Abs>, abs.has_scheme(abs.fst(take_to(ref, 58)), has(ref, 58)), None{}, res.net(ref, a, String.starts_with(ref, "//"))))
+

@@ -1,5 +1,6 @@
 import Base
 import ./http.bend as Http
+import ./url/url.bend as Url
 
 # LAW: the text after a blank line is the body.
 law body_after_blank:
@@ -183,3 +184,97 @@ law req_post_guarded:
 # What the client sends, the server parses back to the same body.
 law req_roundtrip:
   {Http.got_body(Http.parse(Http.encode_req("PUT", "/k", "h", Http.empty(), "v=1"))) == "v=1" : String}
+
+# RFC 9110 §15.4.2 note: user agents change POST to GET on 301 and 302; body headers go with the body.
+law redirect_301_post_to_get:
+  {Http.redirect(301, Map.set(&2, String, Http.empty(), "location", "z"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/z"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+
+law redirect_302_get_kept:
+  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "/q?1"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/q?1"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+
+# §15.4.4: 303 means GET the new URI.
+law redirect_303_put_to_get:
+  {Http.redirect(303, Map.set(&2, String, Http.empty(), "location", "/done"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/done"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+
+law redirect_303_head_kept:
+  {Http.redirect(303, Map.set(&2, String, Http.empty(), "location", "/done"), Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == Some{Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/done"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+
+# §15.4.8, §15.4.9: 307 and 308 keep the method and the body.
+law redirect_307_keeps_post:
+  {Http.redirect(307, Map.set(&2, String, Http.empty(), "location", "/v2"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/v2"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+
+law redirect_308_keeps_put:
+  {Http.redirect(308, Map.set(&2, String, Http.empty(), "location", "/v2"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/v2"}, Map.set(&2, String, Map.set(&2, String, Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+
+# Credentials never follow a hop to another origin.
+law redirect_cross_origin_drops_creds:
+  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "https://evil.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Map.set(&2, String, Map.set(&2, String, Http.empty(), "authorization", "t"), "cookie", "c"), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "evil.com", 443, "/"}, Map.set(&2, String, Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+
+law redirect_same_origin_keeps_creds:
+  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "/b"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/b"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}} : Maybe<&2, Http.Hop>}
+
+# https to http is another origin too.
+law redirect_downgrade_is_cross_origin:
+  {Http.redirect(302, Map.set(&2, String, Http.empty(), "location", "http://a.com/x/y"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Map.set(&2, String, Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"http", "a.com", 80, "/x/y"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+
+law redirect_200_none:
+  {Http.redirect(200, Map.set(&2, String, Http.empty(), "location", "/z"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+
+law redirect_no_location_none:
+  {Http.redirect(301, Http.empty(), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+
+law redirect_other_scheme_none:
+  {Http.redirect(301, Map.set(&2, String, Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+
+# The hint: the header block is not complete yet.
+law need_head:
+  {Http.need("HTTP/1.1 200 OK\r\nContent-", False{}) == Http.NeedHead{} : Http.Need}
+
+# Content-Length: the whole message is the header block plus the body.
+law need_len:
+  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhe", False{}) == Http.NeedLen{43n} : Http.Need}
+
+law need_chunk:
+  {Http.need("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhe", False{}) == Http.NeedChunk{} : Http.Need}
+
+law need_close:
+  {Http.need("HTTP/1.1 200 OK\r\n\r\nabc", False{}) == Http.NeedClose{} : Http.Need}
+
+# HEAD, 1xx, 204, 304: frame at once.
+law need_head_request:
+  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", True{}) == Http.NeedNow{} : Http.Need}
+
+law need_204:
+  {Http.need("HTTP/1.1 204 No Content\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
+
+# Malformed framing: frame at once and let it say Bad.
+law need_cl_te:
+  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
+
+law need_bad_status:
+  {Http.need("HTTP/1.1 abc\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
+
+# The gate opens once Content-Length bytes are in, never before.
+law gate_len_reached:
+  {Http.fetch.gate(False{}, Http.NeedLen{43n}, 43n, "x") == True{} : Bool}
+
+law gate_len_short:
+  {Http.fetch.gate(False{}, Http.NeedLen{43n}, 42n, "x") == False{} : Bool}
+
+# A complete chunked message ends in CRLF CRLF.
+law gate_chunk_end:
+  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "0\r\n\r\n") == True{} : Bool}
+
+law gate_chunk_mid:
+  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "hello") == False{} : Bool}
+
+# A piece under 4 bytes may finish a CRLF CRLF split across reads.
+law gate_chunk_tiny_piece:
+  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "\n") == True{} : Bool}
+
+law gate_close_waits:
+  {Http.fetch.gate(False{}, Http.NeedClose{}, 99n, "x") == False{} : Bool}
+
+# After close, frame always decides.
+law gate_closed_always:
+  {Http.fetch.gate(True{}, Http.NeedHead{}, 0n, "") == True{} : Bool}

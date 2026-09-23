@@ -191,3 +191,84 @@ def Laws.req_post_guarded():
 
 def Laws.req_roundtrip():
   {==}
+
+def Laws.redirect_301_post_to_get():
+  {==}
+
+def Laws.redirect_302_get_kept():
+  {==}
+
+def Laws.redirect_303_put_to_get():
+  {==}
+
+def Laws.redirect_303_head_kept():
+  {==}
+
+def Laws.redirect_307_keeps_post():
+  {==}
+
+def Laws.redirect_308_keeps_put():
+  {==}
+
+def Laws.redirect_cross_origin_drops_creds():
+  {==}
+
+def Laws.redirect_same_origin_keeps_creds():
+  {==}
+
+def Laws.redirect_downgrade_is_cross_origin():
+  {==}
+
+def Laws.redirect_200_none():
+  {==}
+
+def Laws.redirect_no_location_none():
+  {==}
+
+def Laws.redirect_other_scheme_none():
+  {==}
+
+def Laws.need_head():
+  {==}
+
+def Laws.need_len():
+  {==}
+
+def Laws.need_chunk():
+  {==}
+
+def Laws.need_close():
+  {==}
+
+def Laws.need_head_request():
+  {==}
+
+def Laws.need_204():
+  {==}
+
+def Laws.need_cl_te():
+  {==}
+
+def Laws.need_bad_status():
+  {==}
+
+def Laws.gate_len_reached():
+  {==}
+
+def Laws.gate_len_short():
+  {==}
+
+def Laws.gate_chunk_end():
+  {==}
+
+def Laws.gate_chunk_mid():
+  {==}
+
+def Laws.gate_chunk_tiny_piece():
+  {==}
+
+def Laws.gate_close_waits():
+  {==}
+
+def Laws.gate_closed_always():
+  {==}

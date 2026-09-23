@@ -59,3 +59,119 @@ law host_default_port:
 
 law host_other_port:
   {Url.host_field(Url.Abs{"http", "h", 8080, "/"}) == "h:8080" : String}
+
+# RFC 3986 §5.4: examples against base http://a/b/c/d;p?q ('ab_' are §5.4.2).
+law resolve_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g") == Some{Url.Abs{"http", "a", 80, "/b/c/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_dot_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "./g") == Some{Url.Abs{"http", "a", 80, "/b/c/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_g_slash:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g/") == Some{Url.Abs{"http", "a", 80, "/b/c/g/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_abs_path:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "/g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_net_path:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "//g") == Some{Url.Abs{"http", "g", 80, "/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_query:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "?y") == Some{Url.Abs{"http", "a", 80, "/b/c/d;p?y"}} : Maybe<&2, Url.Abs>}
+
+law resolve_g_query:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g?y") == Some{Url.Abs{"http", "a", 80, "/b/c/g?y"}} : Maybe<&2, Url.Abs>}
+
+law resolve_frag:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "#s") == Some{Url.Abs{"http", "a", 80, "/b/c/d;p?q"}} : Maybe<&2, Url.Abs>}
+
+law resolve_g_frag:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g#s") == Some{Url.Abs{"http", "a", 80, "/b/c/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_g_query_frag:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g?y#s") == Some{Url.Abs{"http", "a", 80, "/b/c/g?y"}} : Maybe<&2, Url.Abs>}
+
+law resolve_semi:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, ";x") == Some{Url.Abs{"http", "a", 80, "/b/c/;x"}} : Maybe<&2, Url.Abs>}
+
+law resolve_g_semi:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g;x") == Some{Url.Abs{"http", "a", 80, "/b/c/g;x"}} : Maybe<&2, Url.Abs>}
+
+law resolve_empty:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "") == Some{Url.Abs{"http", "a", 80, "/b/c/d;p?q"}} : Maybe<&2, Url.Abs>}
+
+law resolve_dot:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, ".") == Some{Url.Abs{"http", "a", 80, "/b/c/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_dot_slash:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "./") == Some{Url.Abs{"http", "a", 80, "/b/c/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "..") == Some{Url.Abs{"http", "a", 80, "/b/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up_slash:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../") == Some{Url.Abs{"http", "a", 80, "/b/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../g") == Some{Url.Abs{"http", "a", 80, "/b/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up2:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../..") == Some{Url.Abs{"http", "a", 80, "/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up2_slash:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../../") == Some{Url.Abs{"http", "a", 80, "/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_up2_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../../g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_up3_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../../../g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_up4_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "../../../../g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_root_dot:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "/./g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_root_up:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "/../g") == Some{Url.Abs{"http", "a", 80, "/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_g_dot:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g.") == Some{Url.Abs{"http", "a", 80, "/b/c/g."}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_dot_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, ".g") == Some{Url.Abs{"http", "a", 80, "/b/c/.g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_g_dotdot:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g..") == Some{Url.Abs{"http", "a", 80, "/b/c/g.."}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_dotdot_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "..g") == Some{Url.Abs{"http", "a", 80, "/b/c/..g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_dot_up_g:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "./../g") == Some{Url.Abs{"http", "a", 80, "/b/g"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_g_dot_end:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "./g/.") == Some{Url.Abs{"http", "a", 80, "/b/c/g/"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_g_dot_h:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g/./h") == Some{Url.Abs{"http", "a", 80, "/b/c/g/h"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_g_up_h:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g/../h") == Some{Url.Abs{"http", "a", 80, "/b/c/h"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_params_dot:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g;x=1/./y") == Some{Url.Abs{"http", "a", 80, "/b/c/g;x=1/y"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_params_up:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g;x=1/../y") == Some{Url.Abs{"http", "a", 80, "/b/c/y"}} : Maybe<&2, Url.Abs>}
+
+law resolve_ab_query_dots:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "g?y/./x") == Some{Url.Abs{"http", "a", 80, "/b/c/g?y/./x"}} : Maybe<&2, Url.Abs>}
+
+law resolve_absolute:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "HTTPS://x.y/z?1") == Some{Url.Abs{"https", "x.y", 443, "/z?1"}} : Maybe<&2, Url.Abs>}
+
+# fetch can follow only http(s).
+law resolve_other_scheme:
+  {Url.resolve(Url.Abs{"http", "a", 80, "/b/c/d;p?q"}, "mailto:a@b") == None{} : Maybe<&2, Url.Abs>}
