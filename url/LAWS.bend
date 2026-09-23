@@ -10,6 +10,9 @@ law path_root:
 law encode_root:
   {Url.encode(Url.Url{"/", Map.new(&2, String)}) == "/" : String}
 
+law form_space:
+  {Url.form(Map.set(&2, String, Map.new(&2, String), "q", "a b")) == "q=a%20b" : String}
+
 law pct_space:
   {Url.pct.decode("%20") == Some{" "} : Maybe<&2, String>}
 

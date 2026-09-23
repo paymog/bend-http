@@ -63,3 +63,12 @@ law nameserver_first:
 
 law nameserver_none:
   {Dns.nameserver("search lan\n") == None{} : Maybe<&2, String>}
+
+law nameservers_two:
+  {Dns.nameservers("#\nnameserver 1.1.1.1\nnameserver 8.8.8.8\n") == ["1.1.1.1", "8.8.8.8"] : List<&2, String>}
+
+law hosts_hit:
+  {Dns.hosts("me.test", "127.0.0.1 me.test alias\n") == Some{"127.0.0.1"} : Maybe<&2, String>}
+
+law hosts_miss:
+  {Dns.hosts("no.test", "10.0.0.1 other\n") == None{} : Maybe<&2, String>}

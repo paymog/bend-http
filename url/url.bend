@@ -220,6 +220,20 @@ def encode(u: Url) -> String:
   Url{path, query} = u
   encode.go(pct.encode_path(path), enc.pairs(query))
 
+def form.drop(q: String, empty: Bool) -> String:
+  match empty:
+    case True{}:
+      ""
+    case False{}:
+      String.drop(q, 1n)
+
+def form.go(+q: String) -> String:
+  form.drop(q, String.is_empty(q))
+
+# application/x-www-form-urlencoded. Space is %20.
+def form(m: Map<&2, String>) -> String:
+  form.go(enc.pairs(m))
+
 # Absolute http(s) URLs (RFC 3986 §3) for clients.
 # ---------------------------------------------
 

@@ -46,3 +46,12 @@ def Laws.nameserver_first():
 
 def Laws.nameserver_none():
   {==}
+
+def Laws.nameservers_two():
+  {==}
+
+def Laws.hosts_hit():
+  {==}
+
+def Laws.hosts_miss():
+  {==}

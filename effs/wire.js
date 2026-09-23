@@ -157,7 +157,7 @@ function wire_tls() {
   const T = { i: "i32", l: "i64", U: "u64", p: "ptr", c: "cstring", v: "void" };
   const syms = Object.fromEntries(("TLS_client_method:>p SSL_CTX_new:p>p"
     + " SSL_CTX_set_default_verify_paths:p>i SSL_CTX_set_verify:pip>v"
-    + " SSL_CTX_ctrl:pilp>l SSL_CTX_set_options:pU>U SSL_new:p>p SSL_set_fd:pi>i"
+    + " SSL_CTX_ctrl:pilp>l SSL_new:p>p SSL_set_fd:pi>i"
     + " SSL_ctrl:pilp>l SSL_set1_host:pp>i SSL_connect:p>i SSL_read:ppi>i"
     + " SSL_write:ppi>i SSL_get_error:pi>i SSL_shutdown:p>i SSL_free:p>v"
     + " SSL_get_verify_result:p>l X509_verify_cert_error_string:l>c").split(" ").map((s) => {
@@ -176,7 +176,7 @@ function wire_tls() {
       }
       s.SSL_CTX_set_verify(ctx, 1, null);
       s.SSL_CTX_ctrl(ctx, 123, 0x0303n, null);
-      s.SSL_CTX_set_options(ctx, 1n << 7n);
+      // A bare EOF is an error. close_notify is the only clean close.
       globalThis.BEND_TLS = { s, ctx, ffi, by: new Map() };
       return globalThis.BEND_TLS;
     } catch {

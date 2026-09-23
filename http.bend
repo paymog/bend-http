@@ -4,6 +4,8 @@ import ./about.bend as About
 import ./wire.bend as Wire
 import ./dns/dns.bend as Dns
 import ./url/url.bend as Url
+import ./encoding/encoding.bend as Enc
+import ./json/json.bend as Json
 
 # HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
@@ -278,13 +280,24 @@ def parse.take(rest: String, n: Maybe<&2, U32>) -> Maybe<&2, String>:
     case Some{k}:
       parse.take.have(rest, U32.to_nat(k))
 
-type HexSize is Data:
-  HexSize{n: U32, rest: String}
+# A size line: still open, never a size, or a size plus the bytes after it.
+type Fit is Data:
+  FitMore{}
+  FitBad{}
+  FitSize{n: U32, rest: String}
 
 type Step is Data:
-  StepFail{}
-  StepDone{body: String}
+  StepMore{}
+  StepBad{}
+  StepDone{body: String, rest: String}
   StepNext{rest: String, acc: String}
+
+# More: a valid prefix. Bad: cannot become a body. Body: a whole chunked body.
+type Hold is Data:
+  HoldMore{}
+  HoldBad{}
+  HoldBody{b: String}
+  HoldUntil{b: String}
 
 def is_hex(+c: U32) -> Bool:
   Bool.or(parse_u32.digit(c), Bool.or(Bool.and(U32.is_le(97, c), U32.is_le(c, 102)), Bool.and(U32.is_le(65, c), U32.is_le(c, 70))))
@@ -292,17 +305,17 @@ def is_hex(+c: U32) -> Bool:
 def hexv(+c: U32) -> U32:
   Bool.pick(U32, parse_u32.digit(c), (c - 48 : U32), Bool.pick(U32, U32.is_le(c, 70), (c - 55 : U32), (c - 87 : U32)))
 
-def chunk.lf1(r: String, n: U32, lf: Bool) -> Maybe<&2, HexSize>:
+def chunk.lf1(r: String, n: U32, lf: Bool) -> Fit:
   match lf:
     case True{}:
-      Some{HexSize{n, r}}
+      FitSize{n, r}
     case False{}:
-      None{}
+      FitBad{}
 
-def chunk.lf(t: String, n: U32) -> Maybe<&2, HexSize>:
+def chunk.lf(t: String, n: U32) -> Fit:
   match t:
     case SNil{}:
-      None{}
+      FitMore{}
     case SCon{Chr{c}, r}:
       chunk.lf1(r, n, U32.is_eq(c, 10))
 
@@ -310,10 +323,39 @@ def chunk.lf(t: String, n: U32) -> Maybe<&2, HexSize>:
 # the whole body at every byte. These loops classify the next char into a
 # Bool param and recurse only in the arm that matches.
 
-def chunk.ext.go(t: String, +c: U32, +n: U32, stop: Bool) -> Maybe<&2, HexSize>:
+# CR or ';' can still finish the size line. A bare LF or other byte cannot.
+def chunk.pending.semi(semi: Bool) -> Fit:
+  match semi:
+    case True{}:
+      FitMore{}
+    case False{}:
+      FitBad{}
+
+def chunk.pending(+c: U32, cr: Bool) -> Fit:
+  match cr:
+    case True{}:
+      FitMore{}
+    case False{}:
+      chunk.pending.semi(U32.is_eq(c, 59))
+
+def chunk.size.cut(+c: U32, digit: Bool) -> Fit:
+  match digit:
+    case True{}:
+      FitMore{}
+    case False{}:
+      chunk.pending(c, U32.is_eq(c, 13))
+
+def chunk.ext.cut(+c: U32, stop: Bool) -> Fit:
+  match stop:
+    case False{}:
+      FitMore{}
+    case True{}:
+      chunk.pending(c, U32.is_eq(c, 13))
+
+def chunk.ext.go(t: String, +c: U32, +n: U32, stop: Bool) -> Fit:
   match t:
     case SNil{}:
-      None{}
+      chunk.ext.cut(c, stop)
     case SCon{Chr{+d}, u}:
       match stop:
         case True{}:
@@ -322,28 +364,42 @@ def chunk.ext.go(t: String, +c: U32, +n: U32, stop: Bool) -> Maybe<&2, HexSize>:
           chunk.ext.go(u, d, n, Bool.or(U32.is_eq(d, 13), U32.is_eq(d, 10)))
 
 # RFC 9112 §7.1.1: recipients ignore unknown chunk extensions; a bare LF is not CRLF.
-def chunk.ext(s: String, n: U32) -> Maybe<&2, HexSize>:
+def chunk.ext(s: String, n: U32) -> Fit:
   match s:
     case SNil{}:
-      None{}
+      FitMore{}
     case SCon{Chr{+c}, t}:
       chunk.ext.go(t, c, n, Bool.or(U32.is_eq(c, 13), U32.is_eq(c, 10)))
 
-def chunk.size.end(+c: U32, +t: String, +n: U32, seen: Bool) -> Maybe<&2, HexSize>:
+def chunk.size.end.semi(+c: U32, t: String, +n: U32, semi: Bool) -> Fit:
+  match semi:
+    case True{}:
+      chunk.ext(t, n)
+    case False{}:
+      FitBad{}
+
+def chunk.size.end.cr(+c: U32, t: String, +n: U32, cr: Bool) -> Fit:
+  match cr:
+    case True{}:
+      chunk.lf(t, n)
+    case False{}:
+      chunk.size.end.semi(c, t, n, U32.is_eq(c, 59))
+
+def chunk.size.end(+c: U32, t: String, +n: U32, seen: Bool) -> Fit:
   match seen:
     case False{}:
-      None{}
+      FitBad{}
     case True{}:
-      Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 13), chunk.lf(t, n), Bool.pick(Maybe<&2, HexSize>, U32.is_eq(c, 59), chunk.ext(t, n), None{}))
+      chunk.size.end.cr(c, t, n, U32.is_eq(c, 13))
 
 # A size that would overflow 32 bits ends the digits, and size.end then refuses it.
 def chunk.digit(+c: U32, +acc: U32) -> Bool:
   Bool.and(is_hex(c), U32.is_le(acc, 268435455))
 
-def chunk.size.go(t: String, +c: U32, +acc: U32, seen: Bool, digit: Bool) -> Maybe<&2, HexSize>:
+def chunk.size.go(t: String, +c: U32, +acc: U32, seen: Bool, digit: Bool) -> Fit:
   match t:
     case SNil{}:
-      None{}
+      chunk.size.cut(c, digit)
     case SCon{Chr{+d}, u}:
       match digit:
         case False{}:
@@ -352,30 +408,30 @@ def chunk.size.go(t: String, +c: U32, +acc: U32, seen: Bool, digit: Bool) -> May
           +acc2 = (acc * 16 + hexv(c) : U32)
           chunk.size.go(u, d, acc2, True{}, chunk.digit(d, acc2))
 
-def chunk.size(s: String) -> Maybe<&2, HexSize>:
+def chunk.size(s: String) -> Fit:
   match s:
     case SNil{}:
-      None{}
+      FitMore{}
     case SCon{Chr{+c}, t}:
       chunk.size.go(t, c, 0, False{}, chunk.digit(c, 0))
 
 # The body is built reversed (racc) and turned around once at the end.
 
-def chunk.trailer.ok(racc: String, ok: Bool) -> Step:
+def chunk.trailer.ok(racc: String, rest: String, ok: Bool) -> Step:
   match ok:
     case True{}:
-      StepDone{String.reverse(racc)}
+      StepDone{String.reverse(racc), rest}
     case False{}:
-      StepFail{}
+      StepMore{}
 
 def chunk.trailer.end(hb: String & String, racc: String) -> Step:
   (+h, r) = hb
-  chunk.trailer.ok(racc, String.ends_with(h, "\r\n\r\n"))
+  chunk.trailer.ok(racc, r, String.ends_with(h, "\r\n\r\n"))
 
-def chunk.trailer.if(rest: String, racc: String, blank: Bool) -> Step:
+def chunk.trailer.if(+rest: String, racc: String, blank: Bool) -> Step:
   match blank:
     case True{}:
-      StepDone{String.reverse(racc)}
+      StepDone{String.reverse(racc), String.drop(rest, 2n)}
     case False{}:
       chunk.trailer.end(split_at_blank(rest), racc)
 
@@ -402,17 +458,38 @@ def take.exact(s: String, k: Nat, racc: String) -> Maybe<&2, Took>:
         case 1n+j:
           take.exact(t, j, SCon{c, racc})
 
+def chunk.crlf.lf(t: String) -> Step:
+  match t:
+    case SNil{}:
+      StepMore{}
+    case SCon{c, u}:
+      StepBad{}
+
+def chunk.crlf.cr(t: String, cr: Bool) -> Step:
+  match cr:
+    case False{}:
+      StepBad{}
+    case True{}:
+      chunk.crlf.lf(t)
+
+def chunk.crlf.rest(after: String) -> Step:
+  match after:
+    case SNil{}:
+      StepMore{}
+    case SCon{Chr{+c}, t}:
+      chunk.crlf.cr(t, U32.is_eq(c, 13))
+
 def chunk.crlf.if(racc: String, +after: String, ok: Bool) -> Step:
   match ok:
     case True{}:
       StepNext{String.drop(after, 2n), racc}
     case False{}:
-      StepFail{}
+      chunk.crlf.rest(after)
 
 def chunk.data(m: Maybe<&2, Took>) -> Step:
   match m:
     case None{}:
-      StepFail{}
+      StepMore{}
     case Some{Took{racc, +after}}:
       chunk.crlf.if(racc, after, String.starts_with(after, "\r\n"))
 
@@ -423,32 +500,84 @@ def chunk.step.n(+n: U32, rest: String, racc: String, zero: Bool) -> Step:
     case False{}:
       chunk.data(take.exact(rest, U32.to_nat(n), racc))
 
-def chunk.step.got(got: Maybe<&2, HexSize>, racc: String) -> Step:
+def chunk.step.got(got: Fit, racc: String) -> Step:
   match got:
-    case None{}:
-      StepFail{}
-    case Some{HexSize{+n, rest}}:
+    case FitMore{}:
+      StepMore{}
+    case FitBad{}:
+      StepBad{}
+    case FitSize{+n, rest}:
       chunk.step.n(n, rest, racc, U32.is_eq(n, 0))
 
 def chunk.step(s: String, racc: String) -> Step:
   chunk.step.got(chunk.size(s), racc)
 
-def chunk.go(fuel: Nat, st: Step) -> Maybe<&2, String>:
+def chunk.live.go(fuel: Nat, st: Step) -> Hold:
   match fuel:
     case 0n:
-      None{}
+      match st:
+        case StepMore{}:
+          HoldMore{}
+        case StepBad{}:
+          HoldBad{}
+        case StepDone{b, r}:
+          HoldBody{b}
+        case StepNext{r, a}:
+          HoldBad{}
     case 1n+f:
       match st:
-        case StepFail{}:
-          None{}
-        case StepDone{b}:
-          Some{b}
+        case StepMore{}:
+          HoldMore{}
+        case StepBad{}:
+          HoldBad{}
+        case StepDone{b, r}:
+          HoldBody{b}
         case StepNext{r, a}:
-          chunk.go(f, chunk.step(r, a))
+          chunk.live.go(f, chunk.step(r, a))
 
 # Every chunk eats at least 3 bytes, so length(s) steps always suffice.
+def chunk.live(+s: String) -> Hold:
+  chunk.live.go(String.length(s), chunk.step(s, ""))
+
+def chunk.suffix.go(fuel: Nat, st: Step) -> Maybe<&2, String>:
+  match fuel:
+    case 0n:
+      match st:
+        case StepMore{}:
+          None{}
+        case StepBad{}:
+          None{}
+        case StepDone{b, r}:
+          Some{r}
+        case StepNext{x, a}:
+          None{}
+    case 1n+f:
+      match st:
+        case StepMore{}:
+          None{}
+        case StepBad{}:
+          None{}
+        case StepDone{b, r}:
+          Some{r}
+        case StepNext{x, a}:
+          chunk.suffix.go(f, chunk.step(x, a))
+
+def chunk.suffix(+s: String) -> Maybe<&2, String>:
+  chunk.suffix.go(String.length(s), chunk.step(s, ""))
+
+def chunk.decode.hold(h: Hold) -> Maybe<&2, String>:
+  match h:
+    case HoldMore{}:
+      None{}
+    case HoldBad{}:
+      None{}
+    case HoldUntil{b}:
+      None{}
+    case HoldBody{b}:
+      Some{b}
+
 def chunk.decode(+s: String) -> Maybe<&2, String>:
-  chunk.go(String.length(s), chunk.step(s, ""))
+  chunk.decode.hold(chunk.live(s))
 
 def parse.body.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Maybe<&2, String>:
   match hascl:
@@ -550,21 +679,55 @@ def parse.of(hb: String & String) -> Maybe<&2, Req>:
 def parse(raw: String) -> Maybe<&2, Req>:
   parse.of(split_at_blank(raw))
 
-def parse.res.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Maybe<&2, String>:
+def parse.res.cl.have(+rest: String, +k: Nat, short: Bool) -> Hold:
+  match short:
+    case True{}:
+      HoldMore{}
+    case False{}:
+      HoldBody{String.take(rest, k)}
+
+def parse.res.cl.k(+rest: String, +k: Nat) -> Hold:
+  parse.res.cl.have(rest, k, Nat.is_lt(String.length(rest), k))
+
+def parse.res.cl.n(rest: String, n: Maybe<&2, U32>) -> Hold:
+  match n:
+    case None{}:
+      HoldBad{}
+    case Some{k}:
+      parse.res.cl.k(rest, U32.to_nat(k))
+
+def parse.res.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Hold:
   match hascl:
     case False{}:
-      Some{rest}
+      HoldBody{rest}
     case True{}:
-      parse.take(rest, parse_u32(header(h, "content-length")))
+      parse.res.cl.n(rest, parse_u32(header(h, "content-length")))
 
-def parse.res.te(+h: Map<&2, List<&2, String>>, rest: String, te: Bool) -> Maybe<&2, String>:
+def parse.res.chunked.eq(rest: String, ok: Bool) -> Hold:
+  match ok:
+    case False{}:
+      HoldUntil{rest}
+    case True{}:
+      chunk.live(rest)
+
+def parse.res.chunked.val(te: String, rest: String) -> Hold:
+  parse.res.chunked.eq(rest, String.eq(String.to_lower(te), "chunked"))
+
+def parse.res.chunked(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Hold:
+  match hascl:
+    case True{}:
+      HoldBad{}
+    case False{}:
+      parse.res.chunked.val(header.last(h, "transfer-encoding"), rest)
+
+def parse.res.te(+h: Map<&2, List<&2, String>>, rest: String, te: Bool) -> Hold:
   match te:
     case True{}:
-      parse.body.chunked(h, rest, has_header(h, "content-length"))
+      parse.res.chunked(h, rest, has_header(h, "content-length"))
     case False{}:
       parse.res.cl(h, rest, has_header(h, "content-length"))
 
-def parse.res.body(+h: Map<&2, List<&2, String>>, rest: String) -> Maybe<&2, String>:
+def parse.res.body(+h: Map<&2, List<&2, String>>, rest: String) -> Hold:
   parse.res.te(h, rest, has_header(h, "transfer-encoding"))
 
 # Bad: never a message. More: a valid prefix; read on. Done: a whole response.
@@ -588,11 +751,15 @@ def frame.wait(res: Res, wait: Bool) -> Frame:
     case False{}:
       FrameDone{res}
 
-def frame.done(status: U32, h: Map<&2, List<&2, String>>, body: Maybe<&2, String>, +closed: Bool, open: Bool) -> Frame:
+def frame.done(status: U32, h: Map<&2, List<&2, String>>, body: Hold, +closed: Bool, open: Bool) -> Frame:
   match body:
-    case None{}:
+    case HoldBad{}:
+      FrameBad{}
+    case HoldMore{}:
       frame.cut(closed)
-    case Some{b}:
+    case HoldUntil{b}:
+      frame.wait(Res{status, h, b}, Bool.not(closed))
+    case HoldBody{b}:
       frame.wait(Res{status, h, b}, Bool.and(open, Bool.not(closed)))
 
 # RFC 9112 §6.3 (8): no TE and no CL ⇒ the body runs until the server closes.
@@ -600,9 +767,12 @@ def frame.open(+h: Map<&2, List<&2, String>>) -> Bool:
   Bool.not(Bool.or(has_header(h, "transfer-encoding"), has_header(h, "content-length")))
 
 # RFC 9112 §6.3 (1): HEAD, 1xx, 204 and 304 responses end at the blank line.
-# ponytail: 1xx is returned as final; skip interim responses if a server sends 103
 def frame.nobody(+status: U32, head: Bool) -> Bool:
   Bool.or(head, Bool.or(U32.is_lt(status, 200), Bool.or(U32.is_eq(status, 204), U32.is_eq(status, 304))))
+
+# 101 is the final response. Other 1xx are interim; a final response follows.
+def frame.interim(+status: U32) -> Bool:
+  Bool.and(U32.is_lt(status, 200), Bool.not(U32.is_eq(status, 101)))
 
 def frame.status(status: U32, +h: Map<&2, List<&2, String>>, rest: String, closed: Bool, nobody: Bool) -> Frame:
   match nobody:
@@ -654,9 +824,79 @@ def parse.res.of(hb: String & String, closed: Bool, head: Bool) -> Frame:
   (+hd, rest) = hb
   parse.res.blank(hd, rest, closed, head, String.ends_with(hd, "\r\n\r\n"))
 
+type Lead is Data:
+  LeadCut{}
+  LeadFinal{}
+  LeadSkip{rest: String}
+
+def frame.lead.if(rest: String, interim: Bool) -> Lead:
+  match interim:
+    case True{}:
+      LeadSkip{rest}
+    case False{}:
+      LeadFinal{}
+
+def frame.lead.num(n: Maybe<&2, U32>, rest: String) -> Lead:
+  match n:
+    case None{}:
+      LeadFinal{}
+    case Some{s}:
+      frame.lead.if(rest, frame.interim(s))
+
+def frame.lead.code(mpv: String & String & String, rest: String) -> Lead:
+  (ver, code, reason) = mpv
+  frame.lead.num(parse_u32(code), rest)
+
+def frame.lead.lines(xs: List<&2, String>, rest: String) -> Lead:
+  match xs:
+    case Nil{}:
+      LeadFinal{}
+    case Con{line, headers}:
+      frame.lead.code(start_line(line), rest)
+
+def frame.lead.blank(+hd: String, rest: String, ok: Bool) -> Lead:
+  match ok:
+    case False{}:
+      LeadCut{}
+    case True{}:
+      frame.lead.lines(String.lines(hd), rest)
+
+def frame.lead(hb: String & String) -> Lead:
+  (+hd, rest) = hb
+  frame.lead.blank(hd, rest, String.ends_with(hd, "\r\n\r\n"))
+
+def frame.at.zero.go(+raw: String, closed: Bool, head: Bool, lead: Lead) -> Frame:
+  match lead:
+    case LeadCut{}:
+      frame.cut(closed)
+    case LeadFinal{}:
+      parse.res.of(split_at_blank(raw), closed, head)
+    case LeadSkip{rest}:
+      FrameBad{}
+
+def frame.at.zero(+raw: String, closed: Bool, head: Bool) -> Frame:
+  frame.at.zero.go(raw, closed, head, frame.lead(split_at_blank(raw)))
+
+def frame.at.cont(+raw: String, lead: Lead) -> String:
+  match lead:
+    case LeadCut{}:
+      raw
+    case LeadFinal{}:
+      raw
+    case LeadSkip{rest}:
+      rest
+
+# ponytail: 8 interim responses; raise the fuel if a server sends more
+def frame.at(fuel: Nat, +raw: String, closed: Bool, head: Bool) -> Frame:
+  match fuel:
+    case 0n:
+      frame.at.zero(raw, closed, head)
+    case 1n+f:
+      frame.at(f, frame.at.cont(raw, frame.lead(split_at_blank(raw))), closed, head)
+
 # frame(bytes so far, server closed?, request was HEAD?)
 def frame(raw: String, closed: Bool, head: Bool) -> Frame:
-  parse.res.of(split_at_blank(raw), closed, head)
+  frame.at(8n, raw, closed, head)
 
 def frame.res(f: Frame) -> Maybe<&2, Res>:
   match f:
@@ -699,10 +939,24 @@ def need.cl(hlen: Nat, n: Maybe<&2, U32>) -> Need:
     case Some{k}:
       NeedLen{Nat.add(hlen, U32.to_nat(k))}
 
+def need.te.kind(chunked: Bool) -> Need:
+  match chunked:
+    case True{}:
+      NeedChunk{}
+    case False{}:
+      NeedClose{}
+
+def need.te(+h: Map<&2, List<&2, String>>, cl: Bool, chunked: Bool) -> Need:
+  match cl:
+    case True{}:
+      NeedNow{}
+    case False{}:
+      need.te.kind(chunked)
+
 def need.framing(+h: Map<&2, List<&2, String>>, hlen: Nat, te: Bool, cl: Bool) -> Need:
   match te:
     case True{}:
-      Bool.pick(Need, Bool.or(cl, Bool.not(String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"))), NeedNow{}, NeedChunk{})
+      need.te(h, cl, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"))
     case False{}:
       match cl:
         case True{}:
@@ -754,6 +1008,55 @@ def need.of(hb: String & String, head: Bool) -> Need:
 def need(raw: String, head: Bool) -> Need:
   need.of(split_at_blank(raw), head)
 
+def after.rest(hb: String & String) -> String:
+  (hd, rest) = hb
+  rest
+
+def after.chunk(hb: String & String) -> Maybe<&2, String>:
+  (hd, rest) = hb
+  chunk.suffix(rest)
+
+def after.need(+raw: String, n: Need) -> Maybe<&2, String>:
+  match n:
+    case NeedHead{}:
+      None{}
+    case NeedLen{t}:
+      Some{String.drop(raw, t)}
+    case NeedChunk{}:
+      after.chunk(split_at_blank(raw))
+    case NeedClose{}:
+      None{}
+    case NeedNow{}:
+      Some{after.rest(split_at_blank(raw))}
+
+def after.go(+raw: String, n: Need, f: Frame) -> Maybe<&2, String>:
+  match f:
+    case FrameMore{}:
+      None{}
+    case FrameBad{}:
+      None{}
+    case FrameDone{res}:
+      after.need(raw, n)
+
+# Bytes after a complete self-delimited message. None if it is not one yet.
+def after(+raw: String, +head: Bool) -> Maybe<&2, String>:
+  after.go(raw, need(raw, head), frame(raw, False{}, head))
+
+def again.rest(+close: Bool, +h: Map<&2, List<&2, String>>, rest: Maybe<&2, String>) -> Bool:
+  match rest:
+    case None{}:
+      False{}
+    case Some{x}:
+      Bool.not(String.eq(String.to_lower(header(h, "connection")), "close"))
+
+# True when the request did not ask to close, the response is self-delimited, and the peer did not say close.
+def again(+close: Bool, h: Map<&2, List<&2, String>>, rest: Maybe<&2, String>) -> Bool:
+  match close:
+    case True{}:
+      False{}
+    case False{}:
+      again.rest(close, h, rest)
+
 def res_body.res(res: Res) -> String:
   Res{status, headers, body} = res
   body
@@ -764,6 +1067,12 @@ def res_body(m: Maybe<&2, Res>) -> String:
       ""
     case Some{res}:
       res_body.res(res)
+
+def text(res: Res) -> String:
+  Enc.utf8.decode(res_body.res(res))
+
+def json(res: Res) -> Maybe<&2, Json.Val>:
+  Json.parse(text(res))
 
 def got_body.req(req: Req) -> String:
   Req{method, path, headers, body} = req
@@ -842,9 +1151,19 @@ def req.cl(+m: Map<&2, List<&2, String>>, +method: String, +body: String) -> Map
 
 # Caller headers are lowercased so they cannot duplicate ours; host, connection,
 # content-length and transfer-encoding are always ours (no smuggling through them).
-def encode_req(+method: String, target: String, host: String, headers: Map<&2, List<&2, String>>, +body: String) -> String:
-  +h = set(set(req.put(Map.to_list(&2, List<&2, String>, headers), empty()), "host", host), "connection", "close")
+def encode_req.word(close: Bool) -> String:
+  match close:
+    case True{}:
+      "close"
+    case False{}:
+      "keep-alive"
+
+def encode_req.on(+method: String, target: String, host: String, headers: Map<&2, List<&2, String>>, +body: String, close: Bool) -> String:
+  +h = set(set(req.put(Map.to_list(&2, List<&2, String>, headers), empty()), "host", host), "connection", encode_req.word(close))
   request(method, target, req.cl(h, method, body), body)
+
+def encode_req(+method: String, target: String, host: String, headers: Map<&2, List<&2, String>>, +body: String) -> String:
+  encode_req.on(method, target, host, headers, body, True{})
 
 # Redirects (RFC 9110 §15.4, as WHATWG fetch applies them)
 # --------------------------------------------------------
@@ -976,19 +1295,43 @@ def fetch.gate(closed: Bool, need: Need, +n: Nat, +got: String) -> Bool:
         case NeedNow{}:
           True{}
 
-def fetch.try(gate: Bool, rbuf: String, closed: Bool, head: Bool) -> Frame:
+def fetch.try.gate(gate: Bool, rbuf: String, closed: Bool, head: Bool) -> Frame:
   match gate:
     case True{}:
       frame(String.reverse(rbuf), closed, head)
     case False{}:
       FrameMore{}
 
+def fetch.chunked(need: Need) -> Bool:
+  match need:
+    case NeedChunk{}:
+      True{}
+    case NeedHead{}:
+      False{}
+    case NeedLen{t}:
+      False{}
+    case NeedClose{}:
+      False{}
+    case NeedNow{}:
+      False{}
+
+# A bad chunk does not end in CRLF CRLF, so the gate must not skip it.
+def fetch.try.go(gate: Bool, chunked: Bool, rbuf: String, closed: Bool, head: Bool) -> Frame:
+  match chunked:
+    case True{}:
+      frame(String.reverse(rbuf), closed, head)
+    case False{}:
+      fetch.try.gate(gate, rbuf, closed, head)
+
+def fetch.try(gate: Bool, need: Need, rbuf: String, closed: Bool, head: Bool) -> Frame:
+  fetch.try.go(gate, fetch.chunked(need), rbuf, closed, head)
+
 def fetch.step(+head: Bool, s: Socket, rd: Rd, +got: String, +closed: Bool) -> Socket & Rd:
   Rd{rbuf, n, need, f, err} = rd
   +rbuf2 = {String.reverse(got) ++ rbuf : String}
   +n2 = Nat.add(n, String.length(got))
   +need2 = fetch.need(need, rbuf2, head)
-  (s, Rd{rbuf2, n2, need2, fetch.cap(fetch.try(fetch.gate(closed, need2, n2, got), rbuf2, closed, head), Nat.is_lt(fetch.max(), n2)), None{}})
+  (s, Rd{rbuf2, n2, need2, fetch.cap(fetch.try(fetch.gate(closed, need2, n2, got), need2, rbuf2, closed, head), Nat.is_lt(fetch.max(), n2)), None{}})
 
 def fetch.wire(s: Socket, rd: Rd, +code: U32, why: String) -> Socket & Rd:
   Rd{rbuf, n, need, f, err} = rd
@@ -1006,6 +1349,17 @@ def fetch.next(head: Bool, rd: Rd, m: Socket & Result<&1, &1, U32 & String, Stri
   (s, r) = m
   fetch.next.go(head, s, rd, r)
 
+type Out is Data:
+  OutDone{res: Res, again: Bool, rest: String}
+  OutFail{e: Err}
+
+def fetch.boxed(r: Result<&2, &2, Err, Res>) -> Out:
+  match r:
+    case Done{res}:
+      OutDone{res, False{}, ""}
+    case Fail{e}:
+      OutFail{e}
+
 def fetch.bad(tls: Bool, s: Socket, e: Maybe<&2, Err>) -> IO(Result<&2, &2, Err, Res>):
   match e:
     case None{}:
@@ -1013,20 +1367,68 @@ def fetch.bad(tls: Bool, s: Socket, e: Maybe<&2, Err>) -> IO(Result<&2, &2, Err,
     case Some{err}:
       fetch.close(tls, s, Fail{err})
 
+def fetch.rest(m: Maybe<&2, String>) -> String:
+  match m:
+    case None{}:
+      ""
+    case Some{s}:
+      s
+
+def fetch.shut(tls: Bool, s: Socket, r: Result<&2, &2, Err, Res>) -> IO(Out):
+  do IO<Out>:
+    x : Result<&2, &2, Err, Res> <- fetch.close(tls, s, r)
+    return fetch.boxed(x)
+
+def fetch.hold.go(tls: Bool, s: Socket, res: Res, left: Maybe<&2, String>, ok: Bool) -> IO(Out):
+  match ok:
+    case True{}:
+      IO.pure(Out, OutDone{res, True{}, fetch.rest(left)})
+    case False{}:
+      fetch.shut(tls, s, Done{res})
+
+def fetch.hold(tls: Bool, +close: Bool, s: Socket, +rbuf: String, head: Bool, res: Res) -> IO(Out):
+  Res{status, +headers, body} = res
+  +left = after(String.reverse(rbuf), head)
+  fetch.hold.go(tls, s, res, left, again(close, headers, left))
+
+def fetch.done(+keep: Bool, tls: Bool, +close: Bool, s: Socket, rbuf: String, head: Bool, res: Res) -> IO(Out):
+  match keep:
+    case False{}:
+      fetch.shut(tls, s, Done{res})
+    case True{}:
+      fetch.hold(tls, close, s, rbuf, head, res)
+
+def fetch.failout(tls: Bool, s: Socket, e: Maybe<&2, Err>) -> IO(Out):
+  do IO<Out>:
+    r : Result<&2, &2, Err, Res> <- fetch.bad(tls, s, e)
+    return fetch.boxed(r)
+
 # Reads until frame says Done or Bad; an empty recv means the server closed.
 @unsafe
-def fetch.read(+head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Result<&2, &2, Err, Res>):
+def fetch.loop(+keep: Bool, +close: Bool, +head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Out):
   (s, rd) = st
   Rd{rbuf, n, need, f, err} = rd
   match f:
     case FrameMore{}:
-      do IO<Result<&2, &2, Err, Res>>:
+      do IO<Out>:
         m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
-        fetch.read(head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
+        fetch.loop(keep, close, head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
     case FrameBad{}:
-      fetch.bad(tls, s, err)
+      fetch.failout(tls, s, err)
     case FrameDone{res}:
-      fetch.close(tls, s, Done{res})
+      fetch.done(keep, tls, close, s, rbuf, head, res)
+
+def fetch.drop(tls: Bool, o: Out) -> IO(Result<&2, &2, Err, Res>):
+  match o:
+    case OutFail{e}:
+      IO.pure(Result<&2, &2, Err, Res>, Fail{e})
+    case OutDone{res, again, rest}:
+      IO.pure(Result<&2, &2, Err, Res>, Done{res})
+
+def fetch.read(+head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Result<&2, &2, Err, Res>):
+  do IO<Result<&2, &2, Err, Res>>:
+    o : Out <- fetch.loop(False{}, True{}, head, tls, ms, st)
+    fetch.drop(tls, o)
 
 def fetch.sent(head: Bool, tls: Bool, ms: U32, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&2, &2, Err, Res>):
   (s, r) = m
@@ -1040,6 +1442,28 @@ def fetch.send(head: Bool, +tls: Bool, ms: U32, s: Socket, wire: String) -> IO(R
   do IO<Result<&2, &2, Err, Res>>:
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
     fetch.sent(head, tls, ms, sent)
+
+def exchange.tup(o: Out) -> Bool & Result<&2, &2, Err, Res> & String:
+  match o:
+    case OutFail{e}:
+      (False{}, Fail{e}, "")
+    case OutDone{res, again, rest}:
+      (again, Done{res}, rest)
+
+def exchange.sent(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Out):
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      fetch.shut(tls, s, Fail{err.or_late(code, ErrWrite{code, why})})
+    case Done{u}:
+      fetch.loop(True{}, close, head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
+
+# One request on an open socket. True means that socket can take another request.
+def exchange(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, s: Socket, wire: String) -> IO(Bool & Result<&2, &2, Err, Res> & String):
+  do IO<Bool & Result<&2, &2, Err, Res> & String>:
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
+    o : Out <- exchange.sent(tls, ms, close, head, sent)
+    return exchange.tup(o)
 
 # A failed handshake is an error, never plaintext.
 def fetch.shook(head: Bool, ms: U32, wire: String, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&2, &2, Err, Res>):
@@ -1104,6 +1528,11 @@ type Next is Data:
   NStop{}
   NGo{left: Nat, hop: Hop}
 
+type Mode is Data:
+  ModeFollow{}
+  ModeManual{}
+  ModeError{}
+
 # left: redirects still allowed after the request we just finished.
 def fetch.hop(left: Nat, h: Hop) -> Next:
   match left:
@@ -1130,9 +1559,33 @@ def fetch.decide(left: Nat, h: Hop, m: Result<&2, &2, Err, Res>) -> Next:
     case Done{r}:
       fetch.decide.res(left, h, r)
 
+def fetch.error.res(r: Res, bad: Bool) -> Next:
+  match bad:
+    case True{}:
+      NDone{Fail{ErrRedirect{}}}
+    case False{}:
+      NDone{Done{r}}
+
+def fetch.error(h: Hop, m: Result<&2, &2, Err, Res>) -> Next:
+  match m:
+    case Fail{e}:
+      NDone{Fail{e}}
+    case Done{r}:
+      Res{+status, +headers, body} = r
+      fetch.error.res(r, Bool.and(redirect.code(status), has_header(headers, "location")))
+
+def fetch.policy(mode: Mode, left: Nat, h: Hop, m: Result<&2, &2, Err, Res>) -> Next:
+  match mode:
+    case ModeFollow{}:
+      fetch.decide(left, h, m)
+    case ModeManual{}:
+      NDone{m}
+    case ModeError{}:
+      fetch.error(h, m)
+
 # NGo.left is how many redirects may follow this request. 20 is WHATWG's limit.
 @unsafe
-def fetch.hops(+ms: U32, st: Next) -> IO(Result<&2, &2, Err, Res>):
+def fetch.hops(+mode: Mode, +ms: U32, st: Next) -> IO(Result<&2, &2, Err, Res>):
   match st:
     case NDone{m}:
       IO.pure(Result<&2, &2, Err, Res>, m)
@@ -1141,7 +1594,7 @@ def fetch.hops(+ms: U32, st: Next) -> IO(Result<&2, &2, Err, Res>):
     case NGo{+left, +h}:
       do IO<Result<&2, &2, Err, Res>>:
         m : Result<&2, &2, Err, Res> <- fetch.one(h, ms)
-        fetch.hops(ms, fetch.decide(left, h, m))
+        fetch.hops(mode, ms, fetch.policy(mode, left, h, m))
 
 def fetch.start(method: String, headers: Map<&2, List<&2, String>>, body: String, u: Maybe<&2, Url.Abs>) -> Next:
   match u:
@@ -1154,8 +1607,11 @@ def fetch.start(method: String, headers: Map<&2, List<&2, String>>, body: String
 # Fail is a bad URL, a failed lookup, connect, handshake, send, read, a
 # malformed response, more than 20 redirects, or a step past ms.
 # Body and response body are bytes.
+def fetch.how(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32, mode: Mode) -> IO(Result<&2, &2, Err, Res>):
+  fetch.hops(mode, ms, fetch.start(method, headers, body, Url.absolute(url)))
+
 def fetch.with(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32) -> IO(Result<&2, &2, Err, Res>):
-  fetch.hops(ms, fetch.start(method, headers, body, Url.absolute(url)))
+  fetch.how(method, url, headers, body, ms, ModeFollow{})
 
 # fetch.with and a 30 s step timeout.
 def fetch(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String) -> IO(Result<&2, &2, Err, Res>):
