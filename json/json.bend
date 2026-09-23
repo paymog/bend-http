@@ -1,3 +1,4 @@
+# JSON values, parsed and encoded as RFC 8259.
 import Base
 
 # JSON (RFC 8259) over text; decode bytes with Utf8 first. Nesting has no

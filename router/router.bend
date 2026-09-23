@@ -1,3 +1,4 @@
+# Match an HTTP method and path to a handler.
 import Base
 
 # route(wantMethod, gotMethod, "/users/:id", path) → Maybe params.

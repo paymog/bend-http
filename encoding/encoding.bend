@@ -1,3 +1,4 @@
+# Hex of each char as two nibbles.
 import Base
 
 # Hex of each char as two nibbles. ASCII-oriented.

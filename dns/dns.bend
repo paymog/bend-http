@@ -1,3 +1,4 @@
+# DNS A-record lookup over UDP.
 import Base
 import ../wire.bend as Wire
 

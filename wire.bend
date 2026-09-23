@@ -1,3 +1,4 @@
+# Byte-exact TCP, UDP, and TLS sockets.
 import Base
 
 # Socket IO on octets: one Char per byte (0..255). Base's TCP/UDP effects
