@@ -20,8 +20,89 @@ def Laws.parse_empty_obj():
 def Laws.trailing_junk():
   {==}
 
-def Laws.encode_null():
+def Laws.parse_nested():
   {==}
 
-def Laws.roundtrip_null():
+def Laws.parse_ws():
+  {==}
+
+def Laws.parse_deep():
+  {==}
+
+def Laws.dup_key_last():
+  {==}
+
+def Laws.num_neg_frac_exp():
+  {==}
+
+def Laws.num_neg_zero():
+  {==}
+
+def Laws.num_big_exp():
+  {==}
+
+def Laws.num_leading_zero_rejects():
+  {==}
+
+def Laws.num_bare_minus_rejects():
+  {==}
+
+def Laws.num_dot_end_rejects():
+  {==}
+
+def Laws.num_dot_start_rejects():
+  {==}
+
+def Laws.num_exp_end_rejects():
+  {==}
+
+def Laws.num_plus_rejects():
+  {==}
+
+def Laws.str_escapes():
+  {==}
+
+def Laws.str_unicode_pair():
+  {==}
+
+def Laws.str_lone_surrogate():
+  {==}
+
+def Laws.str_raw_control_rejects():
+  {==}
+
+def Laws.str_bad_escape_rejects():
+  {==}
+
+def Laws.str_unterminated_rejects():
+  {==}
+
+def Laws.arr_trailing_comma_rejects():
+  {==}
+
+def Laws.arr_missing_comma_rejects():
+  {==}
+
+def Laws.obj_missing_colon_rejects():
+  {==}
+
+def Laws.obj_trailing_comma_rejects():
+  {==}
+
+def Laws.obj_number_key_rejects():
+  {==}
+
+def Laws.unclosed_rejects():
+  {==}
+
+def Laws.empty_rejects():
+  {==}
+
+def Laws.encode_canonical():
+  {==}
+
+def Laws.encode_escapes():
+  {==}
+
+def Laws.roundtrip():
   {==}
