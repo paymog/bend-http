@@ -4,7 +4,7 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 
 ## Current baseline
 
-- Packages on the Elbow registry: `http@0.8.0`, `url@0.3.0`, `json@0.2.0`, `dns@0.2.0`, `wire@0.3.0`, `encoding@0.2.0`, `router@0.1.0`.
+- Packages on the Elbow registry: `http@0.9.0`, `url@0.3.0`, `json@0.2.0`, `dns@0.2.0`, `wire@0.3.0`, `encoding@0.2.0`, `router@0.1.0`. Fetch returns `Result` and headers are lists (`f73e022`). The README is `bf9e139`.
 - `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. `fetch.with(..., ms)` sets the timeout. It returns `Result<Res, Err>`: bad URL, DNS, connect, TLS (errno and verify text), read, write, timeout, too many redirects, or a malformed response. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Headers are a list per name. `header` is the first value. `Set-Cookie` is never joined. Encode writes one line per value.
 - Bodies are byte strings: one `Char` per octet. `Enc.utf8.decode` turns a body into text.
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
@@ -13,7 +13,7 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 
 ## Before other people use it
 
-- [ ] **Write a README.** Cover install through Elbow, one `fetch` example, the OpenSSL 3 requirement, native builds for big bodies, and how to run the proofs. Test the steps on a clean machine, including the x86_64 Mac.
+- [ ] **Test the README on a clean machine.** Including the x86_64 Mac.
 - [ ] **Run proofs and smoke tests in CI.** Run every `PROOF.bend` and `check.bend` on each push. Add a live smoke job (example.com over http and https, badssl.com negatives) that may fail without blocking.
 - [ ] **Fix the server side.** `serve` reads one 8 KiB recv and parses it, so bigger requests are cut off and get a 400. Read requests with the same `need`/`frame` loop the client uses. `response()` writes "OK" for every status; use the right reason phrase. The server accepts only `HTTP/1.1` request lines.
 - [ ] **Fail fast on malformed responses.** A bad chunk or bad framing on an open connection returns `More` and waits until close or timeout. Make `frame` return `Bad` as soon as the bytes cannot become a valid message. Add laws for that.
