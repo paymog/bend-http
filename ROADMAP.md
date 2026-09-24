@@ -4,11 +4,11 @@ The goal is the best HTTP library for Bend. This is a ranked backlog, not a prom
 
 ## Current baseline
 
-- Packages on the Elbow registry: `http@0.9.2`, `url@0.3.1`, `json@0.2.1`, `dns@0.2.1`, `wire@0.3.1`, `encoding@0.2.1`, `router@0.1.1`, `bytes@0.1.0`. Fetch returns `Result` and headers are lists (`f73e022`). The README is `bf9e139`. The Bend hub reads the first comment in path order (`c9b30e0`).
+- Packages on the Elbow registry: `http@0.10.0`, `zlib@0.1.0`, `url@0.4.0`, `json@0.3.0`, `dns@0.3.0`, `wire@0.3.2`, `encoding@0.2.1`, `router@0.1.1`, `bytes@0.1.0`, all from `7b6723d`. Fetch returns `Result` and headers are lists (`f73e022`). The README is `bf9e139`. The Bend hub reads the first comment in path order (`c9b30e0`).
 - `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. It runs on a pool of its own that it closes; `Http.pool.*` keeps one idle socket per origin across calls and retries an idempotent request once when a reused socket fails before any response byte (`b566beb`). `fetch.with(..., ms)` sets the timeout. It returns `Result<Res, Err>`: bad URL, DNS, connect, TLS (errno and verify text), read, write, timeout, too many redirects, or a malformed response. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Headers are a list per name. `header` is the first value. `Set-Cookie` is never joined. Encode writes one line per value.
 - Bodies are byte strings: one `Char` per octet. `Http.text` decodes UTF-8. `Http.json` parses that text. `Url.form` writes a form body. `fetch` sends `accept-encoding: gzip, deflate` and decodes gzip and deflate through the `zlib` package (`4787d29`); an unknown coding is left as sent. `Http.open`/`stream.read` and `Http.upload` stream bodies in pieces (`ec55a76`).
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
-- `bytes@0.1.0` (`67341da`) is a byte buffer packed four bytes to a `U32` `Array` slot. It has bounds-checked `get`/`set`, `slice`, `append`, `find`, and `eq`, and it converts to and from byte strings. `bench/bytes` measures the layout. `Http` will adopt it once the `Http` work in progress lands.
+- `bytes@0.1.0` (`67341da`) is a byte buffer packed four bytes to a `U32` `Array` slot. It has bounds-checked `get`/`set`, `slice`, `append`, `find`, and `eq`, and it converts to and from byte strings. `bench/bytes` measures the layout.
 - Laws: http 152, url 57, json 40, bytes 46, zlib 14, dns 18, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 - A bad chunk or bad framing is `FrameBad` while the connection is still open. A close-delimited TLS body that ends without `close_notify` is a read error. Content-Length and chunked bodies do not wait for that close. `100` and `103` are skipped; `101` is final.
@@ -19,7 +19,6 @@ The goal is the best HTTP library for Bend. This is a ranked backlog, not a prom
 
 ## Next
 
-- [ ] **Publish `http@0.10.0` and `zlib@0.1.0`.** `main` has the pool, gzip, streams, and the serve rewrite, but the registry has `http@0.9.2`. `exchange` now returns `Maybe<Socket>`, so this is a breaking release.
 - [ ] **Speed up parsing.** A 1 MB JSON parse takes about 3.4 s of CPU, and a byte string costs one list cell per octet: a 16 MB upload to `serve` takes about 3 s. `bytes` is the array-backed buffer. Next, have `wire.recv` fill `Bytes` directly, then move `Http` framing onto it. That is a breaking change to `Res.body`.
 - [ ] **Stream in the server.** `serve` hands the handler a whole `Req` and sends a whole `Res`. Add a handler form that reads the request body and writes the response in pieces, on the same `Sf`/`dc` framing the client streams use.
 - [ ] **Lingering close in `serve`.** After a 400, 413, or 431, `serve` closes with unread client bytes, so the client may get an RST instead of the response. Stop writing, drain for a moment, then close.
