@@ -448,9 +448,6 @@ def Laws.req_after_chunked():
 def Laws.req_hint_complete():
   {==}
 
-def Laws.req_need_content_length():
-  {==}
-
 def Laws.chunk_feed_split():
   {==}
 
@@ -527,4 +524,16 @@ def Laws.hex_chunk_size():
   {==}
 
 def Laws.hex_zero():
+  {==}
+
+def Laws.serve_head_split():
+  {==}
+
+def Laws.serve_cl_pieces():
+  {==}
+
+def Laws.serve_chunk_run():
+  {==}
+
+def Laws.serve_cl_short():
   {==}

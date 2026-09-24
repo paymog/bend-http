@@ -183,3 +183,10 @@ law eq_after_slice:
 
 law eq_after_aligned_append:
   {same(Bytes.eq(Bytes.append(of("abcd"), of("efg")), of("abcdefg"))) == True{} : Bool}
+
+# Pieces join in order, across word boundaries, and an empty piece adds nothing.
+law concat_pieces:
+  {str(Bytes.concat([of("ab"), of(""), of("cdefg"), of("h")])) == "abcdefgh" : String}
+
+law concat_none:
+  {str(Bytes.concat([])) == "" : String}

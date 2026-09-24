@@ -139,3 +139,9 @@ def Laws.eq_after_slice():
 
 def Laws.eq_after_aligned_append():
   {==}
+
+def Laws.concat_pieces():
+  {==}
+
+def Laws.concat_none():
+  {==}
