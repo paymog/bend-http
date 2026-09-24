@@ -523,3 +523,38 @@ law pool_no_retry_post:
 # A response that had started is never retried.
 law pool_no_retry_partial:
   {Http.pool.retry(False{}, Http.pool.idempotent("GET")) == False{} : Bool}
+
+def gzbytes(xs: List<&2, U32>) -> String:
+  match xs:
+    case Nil{}:
+      SNil{}
+    case Con{c, t}:
+      SCon{Chr{c}, gzbytes(t)}
+
+# RFC 9110 §8.4.1.3: a gzip body is decoded; the headers stay as sent.
+law decoded_gzip:
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 205, 201, 201, 87, 72, 175, 202, 44, 80, 40, 207, 47, 202, 73, 1, 0, 107, 125, 232, 183, 16, 0, 0, 0])})) == "hello gzip world" : String}
+
+# RFC 9110 §8.4: codings are listed in the order applied, so they are undone in reverse.
+law decoded_order:
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "deflate, gzip"), gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 171, 152, 163, 173, 121, 62, 252, 132, 231, 26, 31, 93, 45, 54, 6, 209, 15, 44, 220, 0, 65, 130, 38, 92, 18, 0, 0, 0])})) == "two layers" : String}
+
+# A coding we cannot decode leaves the body as sent.
+law decoded_unknown:
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "br"), "xyz"})) == "xyz" : String}
+
+# A corrupt gzip body is a malformed response.
+law decoded_corrupt:
+  {Http.decoded(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), "not gzip"}) == Fail{Http.ErrBad{}} : Result<&2, &2, Http.Err, Http.Res>}
+
+# An empty body (HEAD, 204, 304) is never decoded.
+law decoded_empty:
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), ""})) == "" : String}
+
+# fetch asks for gzip and deflate unless the caller says otherwise.
+law accept_enc_default:
+  {Http.header(Http.accept.enc(Http.empty()), "accept-encoding") == "gzip, deflate" : String}
+
+# A caller's own Accept-Encoding wins.
+law accept_enc_caller:
+  {Http.header(Http.accept.enc(Http.set(Http.empty(), "accept-encoding", "identity")), "accept-encoding") == "identity" : String}
