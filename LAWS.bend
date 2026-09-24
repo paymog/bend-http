@@ -558,3 +558,51 @@ law accept_enc_default:
 # A caller's own Accept-Encoding wins.
 law accept_enc_caller:
   {Http.header(Http.accept.enc(Http.set(Http.empty(), "accept-encoding", "identity")), "accept-encoding") == "identity" : String}
+
+# RFC 9112 §6.3 (6): Content-Length counts the body.
+law stream_cl:
+  {Http.sf.of(200, Http.set(Http.empty(), "content-length", "5"), False{}, False{}) == Some{Http.SfLen{5n}} : Maybe<&2, Http.Sf>}
+
+# RFC 9112 §6.3 (4): chunked is decoded as it arrives.
+law stream_chunked:
+  {Http.sf.of(200, Http.set(Http.empty(), "transfer-encoding", "chunked"), False{}, False{}) == Some{Http.SfChunk{Http.dc.start()}} : Maybe<&2, Http.Sf>}
+
+# RFC 9112 §6.1: Content-Length with Transfer-Encoding cannot be framed.
+law stream_cl_te:
+  {Http.sf.of(200, Http.set(Http.set(Http.empty(), "content-length", "5"), "transfer-encoding", "chunked"), False{}, False{}) == None{} : Maybe<&2, Http.Sf>}
+
+# RFC 9112 §6.3 (8): no framing header means the body runs to close.
+law stream_close:
+  {Http.sf.of(200, Http.empty(), False{}, False{}) == Some{Http.SfClose{}} : Maybe<&2, Http.Sf>}
+
+# RFC 9112 §6.3 (1): 204 has no body.
+law stream_nobody:
+  {Http.sf.of(204, Http.set(Http.empty(), "content-length", "5"), False{}, True{}) == Some{Http.SfDone{}} : Maybe<&2, Http.Sf>}
+
+# A Content-Length body stops at its length; bytes past it are not body.
+law stream_len_split:
+  {Http.pc.of(Http.SfLen{3n}, "abcdef") == Http.Pc{Http.SfDone{}, Http.PoPiece{"abc"}} : Http.Pc}
+
+# A short read is a piece, and the rest is still owed.
+law stream_len_more:
+  {Http.pc.of(Http.SfLen{5n}, "ab") == Http.Pc{Http.SfLen{3n}, Http.PoPiece{"ab"}} : Http.Pc}
+
+# A chunk split across reads gives the bytes that have arrived.
+law stream_chunk_piece:
+  {Http.pc.of(Http.SfChunk{Http.dc.start()}, "5\r\nhel") == Http.Pc{Http.SfChunk{Http.DcData{2n}}, Http.PoPiece{"hel"}} : Http.Pc}
+
+# RFC 9112 §8: a close before Content-Length is met is an error.
+law stream_len_cut:
+  {Http.pc.eof(Http.SfLen{3n}) == Http.Pc{Http.SfDone{}, Http.PoBad{Http.ErrBad{}}} : Http.Pc}
+
+# 1xx heads before the final response are not body.
+law stream_interim:
+  {Http.body.start("HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\n\r\nbody") == "body" : String}
+
+# Chunk sizes are hex without leading zeros.
+law hex_chunk_size:
+  {Http.hex(4096) == "1000" : String}
+
+# Zero is one digit.
+law hex_zero:
+  {Http.hex(0) == "0" : String}
