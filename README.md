@@ -1,6 +1,6 @@
 # bend-net
 
-HTTP/1.1 client for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are byte strings: one `Char` per octet.
+HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are byte strings: one `Char` per octet.
 
 `http@0.9.2` is a break from `http@0.8.0`. `fetch` returns `Result`, not `Maybe`. Each header name holds a list of values.
 
@@ -69,7 +69,7 @@ def main() -> IO(Unit):
 
 `Http.get` is `fetch("GET", url, Http.empty(), "")`.
 
-A response body over about 30 KB overflows `bend file.bend`. Compile it:
+A response body over about 30 KB overflows `bend file.bend`. Compile it. That needs clang 14 or newer (`apt install clang` on Debian 12 or Ubuntu 22.04 and later; `xcode-select --install` on macOS):
 
 ```sh
 bend file.bend -o app
@@ -88,6 +88,19 @@ Repeated `Set-Cookie` lines stay separate. Encode writes one line per value. A s
 A body is bytes. `Http.text(res)` decodes it as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
 
 A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `True` when the socket is still open and can take another request, plus any bytes already read past this response. `fetch` still closes.
+
+## Serve
+
+```bend
+def hello(req: Http.Req) -> IO(Http.Res):
+  Http.Req{method, path, headers, body} = req
+  IO.pure(Http.Res, Http.Res{200, Http.empty(), path})
+
+def main() -> IO(Unit):
+  Http.serve(~hello, 18080)
+```
+
+`Http.serve(~h, port)` reads each request until it is whole, calls `h`, sends the response, and closes. A request line must be `HTTP/1.1` (with `Host`) or `HTTP/1.0`. A malformed request gets 400. A request over 1 MiB gets 413. A silent client is dropped after 30 seconds. Responses use the RFC 9110 reason phrase. HEAD, 1xx, 204, and 304 responses have no body.
 
 ## Proofs
 

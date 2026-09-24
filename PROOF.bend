@@ -33,7 +33,7 @@ def Laws.body_suffix(s):
   suffix_go(s, False{}, 0, SNil{})
 
 def Laws.page_after_blank(status, headers, page):
-  ("HTTP/1.1 " ++ U32.show(status) ++ " OK" ++ Http.headers_block(headers), {==})
+  ("HTTP/1.1 " ++ U32.show(status) ++ " " ++ Http.reason(status) ++ Http.headers_block(headers), {==})
 
 def drop(n: Nat, s: String) -> String:
   match n:
@@ -390,4 +390,37 @@ def Laws.vary_kept():
   {==}
 
 def Laws.set_cookie_lines():
+  {==}
+
+def Laws.req_head_more():
+  {==}
+
+def Laws.req_cl_more():
+  {==}
+
+def Laws.req_chunk_more():
+  {==}
+
+def Laws.req_chunk_bad():
+  {==}
+
+def Laws.req_te_other_bad():
+  {==}
+
+def Laws.req_http2_bad():
+  {==}
+
+def Laws.req_http10_no_host():
+  {==}
+
+def Laws.reason_404():
+  {==}
+
+def Laws.reason_unknown():
+  {==}
+
+def Laws.encode_204_nobody():
+  {==}
+
+def Laws.encode_head():
   {==}

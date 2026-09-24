@@ -8,16 +8,17 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 - `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. `fetch.with(..., ms)` sets the timeout. It returns `Result<Res, Err>`: bad URL, DNS, connect, TLS (errno and verify text), read, write, timeout, too many redirects, or a malformed response. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Headers are a list per name. `header` is the first value. `Set-Cookie` is never joined. Encode writes one line per value.
 - Bodies are byte strings: one `Char` per octet. `Http.text` decodes UTF-8. `Http.json` parses that text. `Url.form` writes a form body.
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
-- Laws: http 108, url 57, json 40, dns 18, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
+- Laws: http 119, url 57, json 40, dns 18, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 - A bad chunk or bad framing is `FrameBad` while the connection is still open. A close-delimited TLS body that ends without `close_notify` is a read error. Content-Length and chunked bodies do not wait for that close. `100` and `103` are skipped; `101` is final.
 - `Dns.resolve` checks `/etc/hosts`, then the first three nameservers. `resolve.at` asks one server. A silent server is 2 attempts × 5 s, then the next server. `Http.exchange` does one request on an open socket and says whether that socket can take another.
+- `Http.serve` reads until the request is whole (Content-Length or chunked), up to 1 MiB, then answers and closes. It sends the RFC 9110 reason phrase, `connection: close`, no body for HEAD, 1xx, 204 and 304, and accepts `HTTP/1.0` without `Host`. A bad request is 400; a request over 1 MiB is 413.
+- The README install and fetch example pass on clean Debian 12 containers (arm64 and amd64), in the runner and as a native build. The x86_64 Mac is not tested.
 
 ## Before other people use it
 
-- [ ] **Test the README on a clean machine.** Including the x86_64 Mac.
-- [x] **Run proofs and smoke tests in CI.** Proofs run on each push. A live smoke job fetches example.com over http and https and the badssl.com negatives. It may fail without blocking.
-- [ ] **Fix the server side.** `serve` reads one 8 KiB recv and parses it, so bigger requests are cut off and get a 400. Read requests with the same `need`/`frame` loop the client uses. `response()` writes "OK" for every status; use the right reason phrase. The server accepts only `HTTP/1.1` request lines.
+- [ ] **Serve more than one request per connection.** `serve` closes after each response. Add keep-alive and pipelining with the leftover bytes, as `exchange` does for the client.
+- [ ] **Frame requests incrementally.** `serve` re-frames the whole buffer after each read, which is O(n²), so requests stop at 1 MiB. Reverse-buffer and gate like `fetch.loop`, then let the caller set the cap.
 
 ## After people use it
 
