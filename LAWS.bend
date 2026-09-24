@@ -429,11 +429,11 @@ law req_head_more:
 
 # RFC 9112 §6.3 (6): a body shorter than Content-Length is read on, not refused.
 law req_cl_more:
-  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == Http.GotMore{} : Http.Got}
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "content-length", "5"), ""}} : Http.Got}
 
 # RFC 9112 §7.1: an open chunked body is read on.
 law req_chunk_more:
-  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi") == Http.GotMore{} : Http.Got}
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "transfer-encoding", "chunked"), ""}} : Http.Got}
 
 # A bad chunk size is refused at once, not waited on.
 law req_chunk_bad:
@@ -480,29 +480,25 @@ law serve_keep_close:
 law serve_keep_http10:
   {Http.serve.keep(Http.empty(), False{}, 200, Http.empty()) == False{} : Bool}
 
-# Request Content-Length determines the full message size before its body arrives.
-law req_need_content_length:
-  {Http.req.need("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n") == Http.NeedLen{49n} : Http.Need}
-
 # A complete Content-Length request leaves the next request untouched.
 law req_after_content_length:
-  {Http.req.after("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET / HTTP/1.1\r\nHost: x\r\n\r\n") == Some{"GET / HTTP/1.1\r\nHost: x\r\n\r\n"} : Maybe<&2, String>}
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET / HTTP/1.1\r\nHost: x\r\n\r\n"]) == Some{("hi", "GET / HTTP/1.1\r\nHost: x\r\n\r\n")} : Maybe<&1, String & String>}
 
 # A complete chunked request leaves the next request untouched.
 law req_after_chunked:
-  {Http.req.after("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n") == Some{"GET / HTTP/1.1\r\nHost: x\r\n\r\n"} : Maybe<&2, String>}
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n"]) == Some{("hi", "GET / HTTP/1.1\r\nHost: x\r\n\r\n")} : Maybe<&1, String & String>}
 
-# A complete request is never skipped by the framing hint.
+# A request with no body is whole at the blank line.
 law req_hint_complete:
-  {Http.serve.try(True{}, Http.req.need("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), String.reverse("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), False{}) == Http.parse.got("GET / HTTP/1.1\r\nHost: x\r\n\r\n") : Http.Got}
+  {Http.serve.frame(["GET / HTTP/1.1\r\nHost: x\r\n\r\n"]) == Some{("", "")} : Maybe<&1, String & String>}
 
 # A chunked body fed in two pieces decodes as if it came at once.
 law chunk_feed_split:
-  {Http.chunk.hold(Http.serve.dc.more("lo\r\n0\r\n\r\n", Http.dc.feed("5\r\nhel", Http.dc.start(), ""))) == Http.HoldBody{"hello"} : Http.Hold}
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", "lo\r\n0\r\n\r\n"]) == Some{("hello", "")} : Maybe<&1, String & String>}
 
 # A split inside the size line or the final CRLF CRLF still decodes.
 law chunk_feed_split_size:
-  {Http.chunk.hold(Http.serve.dc.more("\r\nabc\r\n0\r\n\r", Http.dc.feed("3", Http.dc.start(), ""))) == Http.HoldMore{} : Http.Hold}
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n3", "\r\nabc\r\n0\r\n\r", "\n"]) == Some{("abc", "")} : Maybe<&1, String & String>}
 
 # Bytes after the last chunk and trailer belong to the next request.
 law chunk_suffix_pipelined:
@@ -606,3 +602,19 @@ law hex_chunk_size:
 # Zero is one digit.
 law hex_zero:
   {Http.hex(0) == "0" : String}
+
+# RFC 9112 §2.2: the blank line that ends the head may arrive split across reads.
+law serve_head_split:
+  {Http.serve.frame(["GET / HTTP/1.1\r\nHost: x\r\n\r", "\nGET"]) == Some{("", "GET")} : Maybe<&1, String & String>}
+
+# RFC 9112 §6.2: a Content-Length body spans reads, and the bytes past it are the next request.
+law serve_cl_pieces:
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nh", "el", "loGET"]) == Some{("hello", "GET")} : Maybe<&1, String & String>}
+
+# RFC 9112 §7.1: one chunk's data may span reads.
+law serve_chunk_run:
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\na\r\n01234", "56789\r\n1\r\n!\r\n0\r\n\r\n"]) == Some{("0123456789!", "")} : Maybe<&1, String & String>}
+
+# RFC 9112 §8: a request cut short is not a request.
+law serve_cl_short:
+  {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhell"]) == None{} : Maybe<&1, String & String>}
