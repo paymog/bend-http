@@ -16,7 +16,7 @@ law body_suffix:
 
 # LAW: a response is some head, then a blank line, then the page.
 law page_after_blank:
-  for status: U32
+  for +status: U32
   for headers: Map<&2, List<&2, String>>
   for +page: String
   exs head: String
@@ -422,3 +422,19 @@ law vary_kept:
 
 law set_cookie_lines:
   {Http.headers_block(Http.add(Http.add(Http.empty(), "set-cookie", "a=1"), "set-cookie", "b=2")) == "\r\nset-cookie: a=1\r\nset-cookie: b=2" : String}
+
+# RFC 9110 §15: the reason phrase follows the status.
+law reason_404:
+  {Http.response(404, Http.empty(), "") == "HTTP/1.1 404 Not Found\r\n\r\n" : String}
+
+# RFC 9112 §4: an unknown status has an empty reason.
+law reason_unknown:
+  {Http.response(599, Http.empty(), "") == "HTTP/1.1 599 \r\n\r\n" : String}
+
+# RFC 9110 §8.6: 204 has no body and no Content-Length.
+law encode_204_nobody:
+  {Http.encode(Http.Res{204, Http.empty(), "x"}) == "HTTP/1.1 204 No Content\r\n\r\n" : String}
+
+# RFC 9110 §9.3.2: HEAD gets the length but not the body.
+law encode_head:
+  {Http.encode.on(Http.Res{200, Http.empty(), "hi"}, True{}) == "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n" : String}

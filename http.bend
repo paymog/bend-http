@@ -1109,8 +1109,29 @@ def headers_block.go(xs: List<&2, Sigma<&2, &2, String, _ => List<&2, String>>>,
 def headers_block(h: Map<&2, List<&2, String>>) -> String:
   headers_block.go(Map.to_list(&2, List<&2, String>, h), "")
 
-def response(status: U32, headers: Map<&2, List<&2, String>>, body: String) -> String:
-  ("HTTP/1.1 " ++ U32.show(status) ++ " OK" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
+# RFC 9110 §15. An unknown code gets an empty reason, which RFC 9112 §4 allows.
+type Reason is Data:
+  Reason{code: U32, text: String}
+
+def reasons() -> List<&2, Reason>:
+  [Reason{100, "Continue"}, Reason{101, "Switching Protocols"}, Reason{103, "Early Hints"},
+   Reason{200, "OK"}, Reason{201, "Created"}, Reason{202, "Accepted"}, Reason{203, "Non-Authoritative Information"}, Reason{204, "No Content"}, Reason{205, "Reset Content"}, Reason{206, "Partial Content"},
+   Reason{300, "Multiple Choices"}, Reason{301, "Moved Permanently"}, Reason{302, "Found"}, Reason{303, "See Other"}, Reason{304, "Not Modified"}, Reason{307, "Temporary Redirect"}, Reason{308, "Permanent Redirect"},
+   Reason{400, "Bad Request"}, Reason{401, "Unauthorized"}, Reason{402, "Payment Required"}, Reason{403, "Forbidden"}, Reason{404, "Not Found"}, Reason{405, "Method Not Allowed"}, Reason{406, "Not Acceptable"}, Reason{407, "Proxy Authentication Required"}, Reason{408, "Request Timeout"}, Reason{409, "Conflict"}, Reason{410, "Gone"}, Reason{411, "Length Required"}, Reason{412, "Precondition Failed"}, Reason{413, "Content Too Large"}, Reason{414, "URI Too Long"}, Reason{415, "Unsupported Media Type"}, Reason{416, "Range Not Satisfiable"}, Reason{417, "Expectation Failed"}, Reason{421, "Misdirected Request"}, Reason{422, "Unprocessable Content"}, Reason{426, "Upgrade Required"}, Reason{428, "Precondition Required"}, Reason{429, "Too Many Requests"}, Reason{431, "Request Header Fields Too Large"},
+   Reason{500, "Internal Server Error"}, Reason{501, "Not Implemented"}, Reason{502, "Bad Gateway"}, Reason{503, "Service Unavailable"}, Reason{504, "Gateway Timeout"}, Reason{505, "HTTP Version Not Supported"}]
+
+def reason.go(xs: List<&2, Reason>, +status: U32) -> String:
+  match xs:
+    case Nil{}:
+      ""
+    case Con{Reason{k, v}, t}:
+      Bool.pick(String, U32.is_eq(k, status), v, reason.go(t, status))
+
+def reason(+status: U32) -> String:
+  reason.go(reasons(), status)
+
+def response(+status: U32, headers: Map<&2, List<&2, String>>, body: String) -> String:
+  ("HTTP/1.1 " ++ U32.show(status) ++ " " ++ reason(status) ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
 
 def nat_u32(n: Nat) -> U32:
   match n:
@@ -1119,9 +1140,20 @@ def nat_u32(n: Nat) -> U32:
     case 1n+p:
       (nat_u32(p) + 1 : U32)
 
+# RFC 9110 §6.4.1, §8.6: 1xx, 204 and 304 have no body; HEAD gets the length but no body.
+def encode.pick(+status: U32, headers: Map<&2, List<&2, String>>, +body: String, head: Bool, nobody: Bool) -> String:
+  match nobody:
+    case True{}:
+      response(status, headers, "")
+    case False{}:
+      response(status, set(headers, "content-length", U32.show(nat_u32(String.length(body)))), Bool.pick(String, head, "", body))
+
+def encode.on(r: Res, head: Bool) -> String:
+  Res{+status, headers, body} = r
+  encode.pick(status, headers, body, head, frame.nobody(status, False{}))
+
 def encode(r: Res) -> String:
-  Res{status, headers, +body} = r
-  response(status, set(headers, "content-length", U32.show(nat_u32(String.length(body)))), body)
+  encode.on(r, False{})
 
 def request(method: String, path: String, headers: Map<&2, List<&2, String>>, body: String) -> String:
   (method ++ " " ++ path ++ " HTTP/1.1" ++ headers_block(headers)) ++ ("\r\n\r\n" ++ body)
