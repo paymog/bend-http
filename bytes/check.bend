@@ -34,6 +34,10 @@ def right(r: Bytes.Bytes & Bytes.Bytes) -> String:
   (a, b) = r
   str(b)
 
+def rightb(r: Bytes.Bytes & Bytes.Bytes) -> Bytes.Bytes:
+  (a, b) = r
+  b
+
 def same(r: Bytes.Bytes & Bytes.Bytes & Bool) -> Bool:
   (a, b, ok) = r
   ok
@@ -88,3 +92,6 @@ def main() -> IO(Unit):
     expect("eq 10 KB", same(Bytes.eq(of(big()), of(big()))))
     expect("eq 10 KB differs", Bool.not(same(Bytes.eq(Bytes.set(of(big()), 5, 98), of(big())))))
     expect("eq after set", same(Bytes.eq(Bytes.set(of("abc"), 1, 98), of("abc"))))
+    expect("slice 10 KB offset 1", String.eq(right(Bytes.slice(of(big()), 1, 10003)), String.drop(big(), 1n)))
+    expect("slice 10 KB offset 3 eq", same(Bytes.eq(rightb(Bytes.slice(of(big()), 3, 10001)), of(String.drop(big(), 3n)))))
+    expect("append 10 KB aligned", String.eq(str(Bytes.append(of(big()), of("wxyz"))), big() ++ "wxyz"))

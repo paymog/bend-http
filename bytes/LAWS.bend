@@ -30,6 +30,10 @@ def right(r: Bytes.Bytes & Bytes.Bytes) -> String:
   (a, b) = r
   str(b)
 
+def rightb(r: Bytes.Bytes & Bytes.Bytes) -> Bytes.Bytes:
+  (a, b) = r
+  b
+
 def same(r: Bytes.Bytes & Bytes.Bytes & Bool) -> Bool:
   (a, b, ok) = r
   ok
@@ -137,3 +141,45 @@ law eq_after_set:
 
 law eq_after_append:
   {same(Bytes.eq(Bytes.append(of("ab"), of("cde")), of("abcde"))) == True{} : Bool}
+
+# A partial last word at each length.
+law roundtrip_one:
+  {str(of("a")) == "a" : String}
+
+law roundtrip_three:
+  {str(of("abc")) == "abc" : String}
+
+law roundtrip_seven:
+  {str(of("abcdefg")) == "abcdefg" : String}
+
+# slice copies whole words, shifted when the start is not word-aligned, then the tail bytes.
+law slice_offset_1:
+  {right(Bytes.slice(of("abcdefghijkl"), 1, 9)) == "bcdefghij" : String}
+
+law slice_offset_2:
+  {right(Bytes.slice(of("abcdefghijkl"), 2, 8)) == "cdefghij" : String}
+
+law slice_offset_3:
+  {right(Bytes.slice(of("abcdefghijkl"), 3, 7)) == "defghij" : String}
+
+law slice_aligned:
+  {right(Bytes.slice(of("abcdefghijkl"), 4, 6)) == "efghij" : String}
+
+law slice_to_end:
+  {right(Bytes.slice(of("abcdefghijkl"), 5, 100)) == "fghijkl" : String}
+
+law slice_octets:
+  {right(Bytes.slice(of(bytes([1, 255, 0, 128, 13, 10, 200])), 1, 5)) == bytes([255, 0, 128, 13, 10]) : String}
+
+law append_aligned:
+  {str(Bytes.append(of("abcd"), of("efghij"))) == "abcdefghij" : String}
+
+law append_unaligned:
+  {str(Bytes.append(of("abcde"), of("fghij"))) == "abcdefghij" : String}
+
+# Word copies leave the bytes past len at 0, so eq still compares whole words.
+law eq_after_slice:
+  {same(Bytes.eq(rightb(Bytes.slice(of("xhello, world"), 1, 12)), of("hello, world"))) == True{} : Bool}
+
+law eq_after_aligned_append:
+  {same(Bytes.eq(Bytes.append(of("abcd"), of("efg")), of("abcdefg"))) == True{} : Bool}

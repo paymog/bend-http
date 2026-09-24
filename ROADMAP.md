@@ -9,7 +9,7 @@ The goal is the best HTTP library for Bend. This is a ranked backlog, not a prom
 - Bodies are byte strings: one `Char` per octet. `Http.text` decodes UTF-8. `Http.json` parses that text. `Url.form` writes a form body.
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
 - `bytes` (not yet published) is a byte buffer packed four bytes to a `U32` `Array` slot. It has bounds-checked `get`/`set`, `slice`, `append`, `find`, and `eq`, and it converts to and from byte strings. `bench/bytes` measures the layout. Nothing uses it yet.
-- Laws: http 119, url 57, json 40, dns 18, bytes 33, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
+- Laws: http 119, url 57, json 40, bytes 46, dns 18, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 - A bad chunk or bad framing is `FrameBad` while the connection is still open. A close-delimited TLS body that ends without `close_notify` is a read error. Content-Length and chunked bodies do not wait for that close. `100` and `103` are skipped; `101` is final.
 - `Dns.resolve` checks `/etc/hosts`, then the first three nameservers. `resolve.at` asks one server. A silent server is 2 attempts × 5 s, then the next server. `Http.exchange` does one request on an open socket and says whether that socket can take another.

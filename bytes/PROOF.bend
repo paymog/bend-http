@@ -100,3 +100,42 @@ def Laws.eq_after_set():
 
 def Laws.eq_after_append():
   {==}
+
+def Laws.roundtrip_one():
+  {==}
+
+def Laws.roundtrip_three():
+  {==}
+
+def Laws.roundtrip_seven():
+  {==}
+
+def Laws.slice_offset_1():
+  {==}
+
+def Laws.slice_offset_2():
+  {==}
+
+def Laws.slice_offset_3():
+  {==}
+
+def Laws.slice_aligned():
+  {==}
+
+def Laws.slice_to_end():
+  {==}
+
+def Laws.slice_octets():
+  {==}
+
+def Laws.append_aligned():
+  {==}
+
+def Laws.append_unaligned():
+  {==}
+
+def Laws.eq_after_slice():
+  {==}
+
+def Laws.eq_after_aligned_append():
+  {==}

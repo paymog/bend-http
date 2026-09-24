@@ -53,7 +53,6 @@ def poke(a: Array<U32>, +i: U32, +v: U32) -> Array<U32>:
   poke.of(i, v, Array.get(U32, a, (i >> 2n : U32)))
 
 # n bytes from src[s..] to dst[d..], one byte at a time.
-# ponytail: byte loop; copy whole words when s and d are both word-aligned if copies get hot.
 def copy.go(n: Nat, r: Array<U32> & U32, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
   match n:
     case 0n:
@@ -63,8 +62,60 @@ def copy.go(n: Nat, r: Array<U32> & U32, dst: Array<U32>, +s: U32, +d: U32) -> A
       (a, v) = r
       copy.go(p, peek(a, (s + 1 : U32)), poke(dst, d, v), (s + 1 : U32), (d + 1 : U32))
 
-def copy(n: Nat, src: Array<U32>, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
-  copy.go(n, peek(src, s), dst, s, d)
+def copy.bytes(+m: U32, src: Array<U32>, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
+  copy.go(U32.to_nat(m), peek(src, s), dst, s, d)
+
+# n words from src[s..] to dst[d..] (word indexes).
+def copy.words(n: Nat, r: Array<U32> & U32, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
+  match n:
+    case 0n:
+      (a, w) = r
+      (a, dst)
+    case 1n+p:
+      (a, +w) = r
+      copy.words(p, Array.get(U32, a, (s + 1 : U32)), Array.set(U32, dst, d, w), (s + 1 : U32), (d + 1 : U32))
+
+# m bytes to a word-aligned d from an unaligned s: each out word joins two source words.
+# lo = 8*(s%4) and hi = 32 - lo; r holds source word k, prev the word before it.
+def copy.shift(n: Nat, +lo: Nat, +hi: Nat, +prev: U32, r: Array<U32> & U32, dst: Array<U32>, +k: U32, +d: U32) -> Array<U32> & Array<U32>:
+  match n:
+    case 0n:
+      (a, w) = r
+      (a, dst)
+    case 1n+p:
+      (a, +w) = r
+      copy.shift(p, lo, hi, w, Array.get(U32, a, (k + 1 : U32)), Array.set(U32, dst, d, (U32.shrn(prev, lo) .|. U32.shln(w, hi) : U32)), (k + 1 : U32), (d + 1 : U32))
+
+def copy.shift.at(+w: U32, +lo: U32, +k: U32, +d: U32, r: Array<U32> & U32, dst: Array<U32>) -> Array<U32> & Array<U32>:
+  (a, prev) = r
+  copy.shift(U32.to_nat(w), U32.to_nat(lo), U32.to_nat((32 - lo : U32)), prev, Array.get(U32, a, (k + 1 : U32)), dst, (k + 1 : U32), d)
+
+def copy.tail(+m: U32, +s: U32, +d: U32, r: Array<U32> & Array<U32>) -> Array<U32> & Array<U32>:
+  (a, b) = r
+  copy.bytes(m, a, b, s, d)
+
+def copy.pick(aligned: Bool, +m: U32, src: Array<U32>, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
+  match aligned:
+    case True{}:
+      +w = (m >> 2n : U32)
+      +k = (w * 4 : U32)
+      copy.tail((m - k : U32), (s + k : U32), (d + k : U32), copy.words(U32.to_nat(w), Array.get(U32, src, (s >> 2n : U32)), dst, (s >> 2n : U32), (d >> 2n : U32)))
+    case False{}:
+      +w = (m >> 2n : U32)
+      +k = (w * 4 : U32)
+      copy.tail((m - k : U32), (s + k : U32), (d + k : U32), copy.shift.at(w, ((s .&. 3 : U32) * 8 : U32), (s >> 2n : U32), (d >> 2n : U32), Array.get(U32, src, (s >> 2n : U32)), dst))
+
+def copy.dst(daligned: Bool, +m: U32, src: Array<U32>, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
+  match daligned:
+    case False{}:
+      copy.bytes(m, src, dst, s, d)
+    case True{}:
+      copy.pick(U32.is_eq((s .&. 3 : U32), 0), m, src, dst, s, d)
+
+# m bytes from src[s..] to dst[d..]. Whole words when d is word-aligned, shifted when s is not.
+# ponytail: an unaligned d (append after an odd length) copies bytes; merge into d's first word if that gets hot.
+def copy(+m: U32, src: Array<U32>, dst: Array<U32>, +s: U32, +d: U32) -> Array<U32> & Array<U32>:
+  copy.dst(U32.is_eq((d .&. 3 : U32), 0), m, src, dst, s, d)
 
 # n zero bytes.
 def new(+n: U32) -> Bytes:
@@ -102,17 +153,35 @@ def set(b: Bytes, +i: U32, +v: U32) -> Bytes:
   Bytes{+len, buf} = b
   set.if(U32.is_lt(i, len), len, buf, i, v)
 
+# String.length counts in Nat, which costs more than the walk itself.
+def count(s: String, +n: U32) -> U32:
+  match s:
+    case SNil{}:
+      n
+    case SCon{c, t}:
+      count(t, (n + 1 : U32))
+
+# Bytes enter at the top of w and shift down, so a full word has byte 0 lowest.
+def flush(full: Bool, a: Array<U32>, +k: U32, +w: U32) -> Array<U32>:
+  match full:
+    case True{}:
+      Array.set(U32, a, k, w)
+    case False{}:
+      a
+
 def from.go(s: String, a: Array<U32>, +i: U32, +w: U32) -> Array<U32>:
   match s:
     case SNil{}:
-      a
+      +r = (i .&. 3 : U32)
+      flush(U32.is_ne(r, 0), a, (i >> 2n : U32), U32.shrn(w, U32.to_nat((((4 - r) .&. 3) * 8 : U32))))
     case SCon{Chr{+c}, t}:
-      +w2 = (w .|. (b8(c) << shift(i)) : U32)
-      from.go(t, Array.set(U32, a, (i >> 2n : U32), w2), (i + 1 : U32), Bool.pick(U32, U32.is_eq((i .&. 3 : U32), 3), 0, w2))
+      +w2 = ((w >> 8n) .|. (b8(c) << 24n) : U32)
+      +full = U32.is_eq((i .&. 3 : U32), 3)
+      from.go(t, flush(full, a, (i >> 2n : U32), w2), (i + 1 : U32), Bool.pick(U32, full, 0, w2))
 
 # A byte string (one Char per octet, as Wire and Http use) to Bytes. Each Char keeps its low 8 bits.
 def from_string(+s: String) -> Bytes:
-  +n = U32.from_nat(String.length(s))
+  +n = count(s, 0)
   Bytes{n, from.go(s, alloc(n), 0, 0)}
 
 def to.go(n: Nat, r: Array<U32> & U32, +i: U32, acc: String) -> String:
@@ -133,7 +202,7 @@ def slice.fin(+len: U32, +m: U32, r: Array<U32> & Array<U32>) -> Bytes & Bytes:
   (Bytes{len, a}, Bytes{m, c})
 
 def slice.at(+len: U32, buf: Array<U32>, +s: U32, +m: U32) -> Bytes & Bytes:
-  slice.fin(len, m, copy(U32.to_nat(m), buf, alloc(m), s, 0))
+  slice.fin(len, m, copy(m, buf, alloc(m), s, 0))
 
 # The buffer back, and a copy of up to n bytes from start. Both ends are clamped to len.
 def slice(b: Bytes, +start: U32, +n: U32) -> Bytes & Bytes:
@@ -147,29 +216,34 @@ def append.fin(+n: U32, r: Array<U32> & Array<U32>) -> Bytes:
 
 def append.two(+n: U32, +la: U32, +lb: U32, bb: Array<U32>, r: Array<U32> & Array<U32>) -> Bytes:
   (x, out) = r
-  append.fin(n, copy(U32.to_nat(lb), bb, out, 0, la))
+  append.fin(n, copy(lb, bb, out, 0, la))
 
 # a then b, in a new buffer.
 def append(a: Bytes, b: Bytes) -> Bytes:
   Bytes{+la, ba} = a
   Bytes{+lb, bb} = b
   +n = (la + lb : U32)
-  append.two(n, la, lb, bb, copy(U32.to_nat(la), ba, alloc(n), 0, 0))
+  append.two(n, la, lb, bb, copy(la, ba, alloc(n), 0, 0))
 
-# Does needle match at j? Short needles, so no early exit.
-def at.go(needle: String, r: Array<U32> & U32, +j: U32, ok: Bool) -> Array<U32> & Bool:
+# Does needle match at j? ok is the previous byte's result; the first mismatch stops the walk.
+def at.go(needle: String, ok: Bool, r: Array<U32> & U32, +j: U32) -> Array<U32> & Bool:
   match needle:
     case SNil{}:
       (a, v) = r
       (a, ok)
     case SCon{Chr{+c}, t}:
-      (a, +v) = r
-      at.go(t, peek(a, (j + 1 : U32)), (j + 1 : U32), Bool.and(ok, U32.is_eq(v, c)))
+      match ok:
+        case False{}:
+          (a, v) = r
+          (a, False{})
+        case True{}:
+          (a, +v) = r
+          at.go(t, U32.is_eq(v, c), peek(a, (j + 1 : U32)), (j + 1 : U32))
 
 def at(a: Array<U32>, +needle: String, +j: U32) -> Array<U32> & Bool:
-  at.go(needle, peek(a, j), j, True{})
+  at.go(needle, True{}, peek(a, j), j)
 
-# ponytail: naive O(len * needle) search; add a first-byte skip or SWAR scan if find gets hot.
+# ponytail: naive search; a mismatch costs one byte read per position, but a repetitive needle is O(len * needle). Add a SWAR scan or two-way search if find gets hot.
 def find.go(f: Nat, r: Array<U32> & Bool, +needle: String, +i: U32) -> Array<U32> & Maybe<&2, U32>:
   match f:
     case 0n:
@@ -197,7 +271,7 @@ def find.at(big: Bool, +len: U32, buf: Array<U32>, +needle: String, +m: U32) -> 
 # Index of the first match of needle (a byte string), or None. An empty needle matches at 0.
 def find(b: Bytes, +needle: String) -> Bytes & Maybe<&2, U32>:
   Bytes{+len, buf} = b
-  +m = U32.from_nat(String.length(needle))
+  +m = count(needle, 0)
   find.at(U32.is_lt(len, m), len, buf, needle, m)
 
 # Compares whole words; same tells whether the previous pair matched.
