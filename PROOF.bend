@@ -459,3 +459,15 @@ def Laws.chunk_feed_split_size():
 
 def Laws.chunk_suffix_pipelined():
   {==}
+
+def Laws.pool_key_origin():
+  {==}
+
+def Laws.pool_retry_get_stale():
+  {==}
+
+def Laws.pool_no_retry_post():
+  {==}
+
+def Laws.pool_no_retry_partial():
+  {==}

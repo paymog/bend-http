@@ -87,7 +87,27 @@ Repeated `Set-Cookie` lines stay separate. Encode writes one line per value. A s
 
 A body is bytes. `Http.text(res)` decodes it as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
 
-A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `True` when the socket is still open and can take another request, plus any bytes already read past this response. `fetch` still closes.
+A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `Some{socket}` when the socket can take another request, the result, and any bytes already read past the response.
+
+## Pool
+
+```bend
+def next(pr: Http.Pool & Result<&2, &2, Http.Err, Http.Res>) -> IO(Http.Pool & Result<&2, &2, Http.Err, Http.Res>):
+  (p, first) = pr
+  Http.pool.fetch(p, "GET", "https://example.com/b", Http.empty(), "")
+
+def done(pr: Http.Pool & Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
+  (p, second) = pr
+  Http.pool.close(p)
+
+def main() -> IO(Unit):
+  do IO<Unit>:
+    r1 : Http.Pool & Result<&2, &2, Http.Err, Http.Res> <- Http.pool.fetch(Http.pool.new(), "GET", "https://example.com/a", Http.empty(), "")
+    r2 : Http.Pool & Result<&2, &2, Http.Err, Http.Res> <- next(r1)
+    done(r2)
+```
+
+`Http.pool.fetch(p, method, url, headers, body)` is `fetch` on the pool's idle sockets. It returns the pool with the result. Pass that pool to the next call. A pool holds one idle socket per scheme, host, and port. Redirects use the pool too. When a reused socket fails before any response byte, a GET, HEAD, OPTIONS, TRACE, PUT, or DELETE is retried once on a new connection; other methods fail. `Http.pool.fetch.with(..., ms)` sets the step timeout. `Http.pool.how(..., ms, mode)` sets the redirect mode. `Http.pool.close(p)` closes the idle sockets. `Http.fetch` is a pool of its own that closes when the call ends.
 
 ## Serve
 
