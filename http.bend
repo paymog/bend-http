@@ -6,6 +6,7 @@ import ./dns/dns.bend as Dns
 import ./url/url.bend as Url
 import ./encoding/encoding.bend as Enc
 import ./json/json.bend as Json
+import ./zlib/zlib.bend as Zlib
 
 # HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
@@ -1808,12 +1809,16 @@ def fetch.policy(mode: Mode, left: Nat, h: Hop, m: Result<&2, &2, Err, Res>) -> 
     case ModeError{}:
       fetch.error(h, m)
 
+# A caller's own Accept-Encoding wins.
+def accept.enc(+h: Map<&2, List<&2, String>>) -> Map<&2, List<&2, String>>:
+  Bool.pick(Map<&2, List<&2, String>>, has_header(h, "accept-encoding"), h, set(h, "accept-encoding", "gzip, deflate"))
+
 def fetch.start(method: String, headers: Map<&2, List<&2, String>>, body: String, u: Maybe<&2, Url.Abs>) -> Next:
   match u:
     case None{}:
       NDone{Fail{ErrUrl{}}}
     case Some{a}:
-      NGo{20n, Hop{method, a, req.put(Map.to_list(&2, List<&2, String>, headers), empty()), body}}
+      NGo{20n, Hop{method, a, accept.enc(req.put(Map.to_list(&2, List<&2, String>, headers), empty())), body}}
 
 def pool.next(+mode: Mode, left: Nat, h: Hop, pr: Pool & Result<&2, &2, Err, Res>) -> Pool & Next:
   (p, m) = pr
@@ -1833,9 +1838,101 @@ def pool.hops(+mode: Mode, +ms: U32, st: Pool & Next) -> IO(Pool & Result<&2, &2
         pr : Pool & Result<&2, &2, Err, Res> <- pool.one(p, h, ms)
         pool.hops(mode, ms, pool.next(mode, left, h, pr))
 
+# Content-Encoding (RFC 9110 §8.4): each value, trimmed and lowercased, in the order applied.
+def ce.keep(+w: String, +rest: List<&2, String>) -> List<&2, String>:
+  Bool.pick(List<&2, String>, String.is_empty(w), rest, Con{w, rest})
+
+def ce.norm(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{v, t}:
+      ce.keep(String.to_lower(String.trim(v)), ce.norm(t))
+
+def ce.split(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{v, t}:
+      List.append(&2, String, ce.norm(String.split(v, ',')), ce.split(t))
+
+# Ok: decoded so far. Bad: a coding failed. Skip: a coding we cannot decode, so the body stays as sent.
+type Dec is Data:
+  DecOk{b: String}
+  DecBad{}
+  DecSkip{}
+
+def ce.of(m: Maybe<&2, String>) -> Dec:
+  match m:
+    case None{}:
+      DecBad{}
+    case Some{b}:
+      DecOk{b}
+
+# Servers send deflate both with and without the zlib wrapper.
+def ce.deflate(+b: String, m: Maybe<&2, String>) -> Dec:
+  match m:
+    case Some{out}:
+      DecOk{out}
+    case None{}:
+      ce.of(Zlib.inflate(b))
+
+def ce.apply(+c: String, +b: String) -> Dec:
+  Bool.pick(Dec, Bool.or(String.eq(c, "gzip"), String.eq(c, "x-gzip")), ce.of(Zlib.gunzip(b)),
+    Bool.pick(Dec, String.eq(c, "deflate"), ce.deflate(b, Zlib.unzlib(b)),
+      Bool.pick(Dec, String.eq(c, "identity"), DecOk{b}, DecSkip{})))
+
+def ce.go(cs: List<&2, String>, d: Dec) -> Dec:
+  match cs:
+    case Nil{}:
+      d
+    case Con{+c, t}:
+      match d:
+        case DecOk{+b}:
+          ce.go(t, ce.apply(c, b))
+        case DecBad{}:
+          DecBad{}
+        case DecSkip{}:
+          DecSkip{}
+
+def decoded.pick(d: Dec, +status: U32, headers: Map<&2, List<&2, String>>, body: String) -> Result<&2, &2, Err, Res>:
+  match d:
+    case DecOk{b}:
+      Done{Res{status, headers, b}}
+    case DecBad{}:
+      Fail{ErrBad{}}
+    case DecSkip{}:
+      Done{Res{status, headers, body}}
+
+def decoded.go(empty: Bool, +status: U32, +headers: Map<&2, List<&2, String>>, +body: String) -> Result<&2, &2, Err, Res>:
+  match empty:
+    case True{}:
+      Done{Res{status, headers, body}}
+    case False{}:
+      decoded.pick(ce.go(List.reverse(&2, String, ce.split(fields(headers, "content-encoding"))), DecOk{body}), status, headers, body)
+
+# The body decoded per Content-Encoding; the headers stay as sent. A corrupt body is ErrBad.
+def decoded(res: Res) -> Result<&2, &2, Err, Res>:
+  Res{+status, +headers, +body} = res
+  decoded.go(String.is_empty(body), status, headers, body)
+
+def decoded.m(r: Result<&2, &2, Err, Res>) -> Maybe<&2, Res>:
+  match r:
+    case Done{x}:
+      Some{x}
+    case Fail{e}:
+      None{}
+
+def decoded.some(res: Res) -> Maybe<&2, Res>:
+  decoded.m(decoded(res))
+
 # The final response of a fetch, after redirects.
 def fetch.final(r: Result<&2, &2, Err, Res>) -> Result<&2, &2, Err, Res>:
-  r
+  match r:
+    case Done{res}:
+      decoded(res)
+    case Fail{e}:
+      Fail{e}
 
 def pool.final(pr: Pool & Result<&2, &2, Err, Res>) -> Pool & Result<&2, &2, Err, Res>:
   (p, r) = pr

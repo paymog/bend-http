@@ -89,6 +89,12 @@ A body is bytes. `Http.text(res)` decodes it as UTF-8. A bad byte becomes U+FFFD
 
 A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `Some{socket}` when the socket can take another request, the result, and any bytes already read past the response.
 
+## Compressed bodies
+
+`fetch` sends `accept-encoding: gzip, deflate` unless you set `Accept-Encoding` yourself. It decodes the body per `Content-Encoding`: `gzip` and `x-gzip`, `deflate` with or without the zlib wrapper, and `identity`. A list of codings is undone in reverse order. An unknown coding, such as `br`, leaves the body as sent. A corrupt body is `ErrBad`. The headers stay as the server sent them, so `content-length` is the compressed size. `Http.decoded(res)` does the same for a response you got another way. `exchange` never decodes.
+
+The `zlib` package has `Zlib.inflate` (raw DEFLATE, RFC 1951), `Zlib.gunzip` (RFC 1952, one member, CRC-32 and size checked), `Zlib.unzlib` (RFC 1950, Adler-32 checked), `Zlib.crc32`, and `Zlib.adler32`. Each returns `None` for malformed or cut-short input. A 1 MB body decodes in about 0.1 s natively.
+
 ## Pool
 
 ```bend
