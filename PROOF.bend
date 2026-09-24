@@ -211,12 +211,6 @@ def Laws.frame_te_gzip_more():
 def Laws.frame_te_gzip_close():
   {==}
 
-def Laws.fetch_bad_chunk_now():
-  {==}
-
-def Laws.fetch_short_chunk_more():
-  {==}
-
 def Laws.text_utf8():
   {==}
 
@@ -244,9 +238,6 @@ def Laws.frame_interim_cap():
 def Laws.frame_interim_eight():
   {==}
 
-
-def Laws.need_te_gzip():
-  {==}
 
 def Laws.after_cl():
   {==}
@@ -325,51 +316,6 @@ def Laws.redirect_no_location_none():
   {==}
 
 def Laws.redirect_other_scheme_none():
-  {==}
-
-def Laws.need_head():
-  {==}
-
-def Laws.need_len():
-  {==}
-
-def Laws.need_chunk():
-  {==}
-
-def Laws.need_close():
-  {==}
-
-def Laws.need_head_request():
-  {==}
-
-def Laws.need_204():
-  {==}
-
-def Laws.need_cl_te():
-  {==}
-
-def Laws.need_bad_status():
-  {==}
-
-def Laws.gate_len_reached():
-  {==}
-
-def Laws.gate_len_short():
-  {==}
-
-def Laws.gate_chunk_end():
-  {==}
-
-def Laws.gate_chunk_mid():
-  {==}
-
-def Laws.gate_chunk_tiny_piece():
-  {==}
-
-def Laws.gate_close_waits():
-  {==}
-
-def Laws.gate_closed_always():
   {==}
 
 def Laws.err_timeout_mac():
@@ -490,6 +436,138 @@ def Laws.accept_enc_default():
 def Laws.accept_enc_caller():
   {==}
 
+def Laws.hex_chunk_size():
+  {==}
+
+def Laws.hex_zero():
+  {==}
+
+def Laws.serve_head_split():
+  {==}
+
+def Laws.serve_cl_pieces():
+  {==}
+
+def Laws.serve_chunk_run():
+  {==}
+
+def Laws.serve_cl_short():
+  {==}
+
+def Laws.loop_head_more_whole():
+  {==}
+
+def Laws.loop_head_cut_bad_whole():
+  {==}
+
+def Laws.loop_head_cut_bad_bytes():
+  {==}
+
+def Laws.loop_cl_more_whole():
+  {==}
+
+def Laws.loop_cl_more_bytes():
+  {==}
+
+def Laws.loop_cl_cut_bad_whole():
+  {==}
+
+def Laws.loop_cl_done_whole():
+  {==}
+
+def Laws.loop_cl_done_bytes():
+  {==}
+
+def Laws.loop_open_more_whole():
+  {==}
+
+def Laws.loop_open_close_whole():
+  {==}
+
+def Laws.loop_open_close_bytes():
+  {==}
+
+def Laws.loop_chunked_more_whole():
+  {==}
+
+def Laws.loop_chunked_more_bytes():
+  {==}
+
+def Laws.loop_chunked_done_whole():
+  {==}
+
+def Laws.loop_chunked_done_bytes():
+  {==}
+
+def Laws.loop_head_request_whole():
+  {==}
+
+def Laws.loop_head_request_bytes():
+  {==}
+
+def Laws.loop_304_whole():
+  {==}
+
+def Laws.loop_bad_status_whole():
+  {==}
+
+def Laws.loop_chunk_bad_size_whole():
+  {==}
+
+def Laws.loop_chunk_bad_data_whole():
+  {==}
+
+def Laws.loop_chunk_bad_data_bytes():
+  {==}
+
+def Laws.loop_chunk_cut_whole():
+  {==}
+
+def Laws.loop_chunk_cut_bytes():
+  {==}
+
+def Laws.loop_cl_and_te_whole():
+  {==}
+
+def Laws.loop_bad_length_whole():
+  {==}
+
+def Laws.loop_te_gzip_close_whole():
+  {==}
+
+def Laws.loop_te_gzip_close_bytes():
+  {==}
+
+def Laws.loop_100_then_ok_whole():
+  {==}
+
+def Laws.loop_100_then_ok_bytes():
+  {==}
+
+def Laws.loop_100_cut_whole():
+  {==}
+
+def Laws.loop_101_final_whole():
+  {==}
+
+def Laws.loop_interim_cap_whole():
+  {==}
+
+def Laws.loop_interim_eight_whole():
+  {==}
+
+def Laws.loop_cookies_whole():
+  {==}
+
+def Laws.loop_cookies_bytes():
+  {==}
+
+def Laws.loop_close_rest():
+  {==}
+
+def Laws.loop_cl_rest():
+  {==}
+
 def Laws.stream_cl():
   {==}
 
@@ -514,26 +592,8 @@ def Laws.stream_len_more():
 def Laws.stream_chunk_piece():
   {==}
 
+def Laws.stream_chunk_end():
+  {==}
+
 def Laws.stream_len_cut():
-  {==}
-
-def Laws.stream_interim():
-  {==}
-
-def Laws.hex_chunk_size():
-  {==}
-
-def Laws.hex_zero():
-  {==}
-
-def Laws.serve_head_split():
-  {==}
-
-def Laws.serve_cl_pieces():
-  {==}
-
-def Laws.serve_chunk_run():
-  {==}
-
-def Laws.serve_cl_short():
   {==}

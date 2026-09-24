@@ -535,6 +535,89 @@ def chunk.decode.hold(h: Hold) -> Maybe<&2, String>:
 def chunk.decode(s: String) -> Maybe<&2, String>:
   chunk.decode.hold(chunk.live(s))
 
+def bytes.snd(r: Bytes.Bytes & Bytes.Bytes) -> Bytes.Bytes:
+  (a, b) = r
+  b
+
+def found.at(+from: U32, m: Maybe<&2, U32>) -> Maybe<&2, U32>:
+  match m:
+    case None{}:
+      None{}
+    case Some{+j}:
+      Some{(from + j : U32)}
+
+# A chunked body decoded from piece[i..]: a data run is sliced whole, and every other byte steps dc.
+type Cs is Type:
+  Cs{piece: Bytes.Bytes, i: U32, st: Dc, parts: List<&1, Bytes.Bytes>}
+
+# st: where the decoder stopped. parts: the data so far, newest first. rest: the bytes after a Done body.
+type Ck is Type:
+  Ck{st: Dc, parts: List<&1, Bytes.Bytes>, rest: Bytes.Bytes}
+
+def ck.next(+len: U32, +i: U32, +st: Dc, piece: Bytes.Bytes, parts: List<&1, Bytes.Bytes>) -> Bool & Cs:
+  (Bool.and(U32.is_lt(i, len), dc.live(st)), Cs{piece, i, st, parts})
+
+def ck.data(+len: U32, +i: U32, +k: U32, +m: U32, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Bytes.Bytes) -> Bool & Cs:
+  (piece, run) = r
+  ck.next(len, (i + m : U32), dc.data(k, m), piece, Con{run, parts})
+
+def ck.byte(+len: U32, +i: U32, st: Dc, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Maybe<&2, U32>) -> Bool & Cs:
+  (piece, m) = r
+  match m:
+    case None{}:
+      ck.next(len, i, DcBad{}, piece, parts)
+    case Some{+c}:
+      ck.next(len, (i + 1 : U32), dc.step(st, c), piece, parts)
+
+def ck.step(+len: U32, cs: Cs) -> Bool & Cs:
+  Cs{piece, +i, st, parts} = cs
+  match st:
+    case DcData{+k}:
+      +m = U32.min(k, (len - i : U32))
+      ck.data(len, i, k, m, parts, Bytes.slice(piece, i, m))
+    case DcDone{}:
+      (False{}, Cs{piece, i, DcDone{}, parts})
+    case DcBad{}:
+      (False{}, Cs{piece, i, DcBad{}, parts})
+    case DcSize{+acc, seen}:
+      ck.byte(len, i, DcSize{acc, seen}, parts, Bytes.get(piece, i))
+    case DcExt{+n}:
+      ck.byte(len, i, DcExt{n}, parts, Bytes.get(piece, i))
+    case DcSizeLf{+n}:
+      ck.byte(len, i, DcSizeLf{n}, parts, Bytes.get(piece, i))
+    case DcDataCr{}:
+      ck.byte(len, i, DcDataCr{}, parts, Bytes.get(piece, i))
+    case DcDataLf{}:
+      ck.byte(len, i, DcDataLf{}, parts, Bytes.get(piece, i))
+    case DcTr{+j}:
+      ck.byte(len, i, DcTr{j}, parts, Bytes.get(piece, i))
+
+def ck.rest(st: Dc, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Bytes.Bytes) -> Ck:
+  (piece, rest) = r
+  Ck{st, parts, rest}
+
+def ck.end(+len: U32, cs: Cs) -> Ck:
+  Cs{piece, +i, st, parts} = cs
+  ck.rest(st, parts, Bytes.slice(piece, i, (len - i : U32)))
+
+# Each step reads at least one byte, so len steps are enough.
+def ck.feed(f: Nat, +len: U32, r: Bool & Cs) -> Ck:
+  match f:
+    case 0n:
+      (go, cs) = r
+      ck.end(len, cs)
+    case 1n+p:
+      (go, cs) = r
+      match go:
+        case False{}:
+          ck.end(len, cs)
+        case True{}:
+          ck.feed(p, len, ck.step(len, cs))
+
+def ck(piece: Bytes.Bytes, +st: Dc, parts: List<&1, Bytes.Bytes>) -> Ck:
+  Bytes.Bytes{+len, buf} = piece
+  ck.feed(U32.to_nat(len), len, ck.next(len, 0, st, Bytes.Bytes{len, buf}, parts))
+
 def parse.res.cl.have(+rest: String, +k: Nat, short: Bool) -> Hold:
   match short:
     case True{}:
@@ -910,126 +993,326 @@ def res_fields(m: Maybe<&2, Res>, k: String) -> List<&2, String>:
     case Some{res}:
       res_fields.res(res, k)
 
-# When can a response be whole? fetch uses this to skip re-framing a growing
-# buffer after every read. Head: the header block is not in yet. Len: the
-# message is total bytes long. Chunk: it ends with CRLF CRLF. Close: only at
-# close. Now: frame it at once (no body, or already malformed).
-type Need is Data:
-  NeedHead{}
-  NeedLen{total: Nat}
-  NeedChunk{}
-  NeedClose{}
-  NeedNow{}
+# The response body as it arrives. Len: bytes left. Chunk: the decoder. Close: until the
+# server closes. Done: the body is whole. Bad: it cannot become a body.
+type Rb is Data:
+  RbLen{left: U32}
+  RbChunk{st: Dc}
+  RbClose{}
+  RbDone{}
+  RbBad{}
 
-def need.cl(hlen: Nat, n: Maybe<&2, U32>) -> Need:
+def rb.cl(n: Maybe<&2, U32>) -> Maybe<&2, Rb>:
   match n:
     case None{}:
-      NeedNow{}
-    case Some{k}:
-      NeedLen{Nat.add(hlen, U32.to_nat(k))}
+      None{}
+    case Some{+k}:
+      Some{Bool.pick(Rb, U32.is_zero(k), RbDone{}, RbLen{k})}
 
-def need.te.kind(chunked: Bool) -> Need:
-  match chunked:
-    case True{}:
-      NeedChunk{}
-    case False{}:
-      NeedClose{}
-
-def need.te(+h: Map<&2, List<&2, String>>, cl: Bool, chunked: Bool) -> Need:
+def rb.te(+h: Map<&2, List<&2, String>>, cl: Bool) -> Maybe<&2, Rb>:
   match cl:
     case True{}:
-      NeedNow{}
+      None{}
     case False{}:
-      need.te.kind(chunked)
+      Some{Bool.pick(Rb, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"), RbChunk{dc.start()}, RbClose{})}
 
-def need.framing(+h: Map<&2, List<&2, String>>, hlen: Nat, te: Bool, cl: Bool) -> Need:
+def rb.len(+h: Map<&2, List<&2, String>>, te: Bool) -> Maybe<&2, Rb>:
   match te:
     case True{}:
-      need.te(h, cl, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"))
+      rb.te(h, has_header(h, "content-length"))
     case False{}:
-      match cl:
-        case True{}:
-          need.cl(hlen, parse_u32(header(h, "content-length")))
-        case False{}:
-          NeedClose{}
+      Bool.pick(Maybe<&2, Rb>, has_header(h, "content-length"), rb.cl(parse_u32(header(h, "content-length"))), Some{RbClose{}})
 
-def need.fields(hlen: Nat, nobody: Bool, fs: Maybe<&2, Map<&2, List<&2, String>>>) -> Need:
+# RFC 9112 §6.3: how the body of this response ends. None: it cannot be framed.
+def rb.of(+h: Map<&2, List<&2, String>>, nobody: Bool) -> Maybe<&2, Rb>:
   match nobody:
     case True{}:
-      NeedNow{}
+      Some{RbDone{}}
     case False{}:
-      match fs:
-        case None{}:
-          NeedNow{}
-        case Some{+h}:
-          need.framing(h, hlen, has_header(h, "transfer-encoding"), has_header(h, "content-length"))
+      rb.len(h, has_header(h, "transfer-encoding"))
 
-def need.num(code: Maybe<&2, U32>, headers: List<&2, String>, hlen: Nat, head: Bool) -> Need:
-  match code:
+# rb: how the body goes on. parts: body bytes so far, newest first. rest: bytes past a Done body.
+type Bf is Type:
+  Bf{rb: Rb, parts: List<&1, Bytes.Bytes>, rest: Bytes.Bytes}
+
+def rb.len.cut(parts: List<&1, Bytes.Bytes>, +len: U32, +left: U32, r: Bytes.Bytes & Bytes.Bytes) -> Bf:
+  (piece, data) = r
+  Bf{RbDone{}, Con{data, parts}, bytes.snd(Bytes.slice(piece, left, (len - left : U32)))}
+
+def rb.len.have(short: Bool, +left: U32, parts: List<&1, Bytes.Bytes>, +len: U32, piece: Bytes.Bytes) -> Bf:
+  match short:
+    case True{}:
+      Bf{RbLen{(left - len : U32)}, Con{piece, parts}, Bytes.new(0)}
+    case False{}:
+      rb.len.cut(parts, len, left, Bytes.slice(piece, 0, left))
+
+def rb.chunk(c: Ck) -> Bf:
+  Ck{st, parts, rest} = c
+  match st:
+    case DcDone{}:
+      Bf{RbDone{}, parts, rest}
+    case DcBad{}:
+      Bf{RbBad{}, parts, rest}
+    case DcSize{a, b}:
+      Bf{RbChunk{DcSize{a, b}}, parts, rest}
+    case DcExt{x}:
+      Bf{RbChunk{DcExt{x}}, parts, rest}
+    case DcSizeLf{x}:
+      Bf{RbChunk{DcSizeLf{x}}, parts, rest}
+    case DcData{k}:
+      Bf{RbChunk{DcData{k}}, parts, rest}
+    case DcDataCr{}:
+      Bf{RbChunk{DcDataCr{}}, parts, rest}
+    case DcDataLf{}:
+      Bf{RbChunk{DcDataLf{}}, parts, rest}
+    case DcTr{j}:
+      Bf{RbChunk{DcTr{j}}, parts, rest}
+
+# The body bytes in piece, added to parts.
+def rb.feed(rb: Rb, parts: List<&1, Bytes.Bytes>, piece: Bytes.Bytes) -> Bf:
+  match rb:
+    case RbLen{+left}:
+      Bytes.Bytes{+len, buf} = piece
+      rb.len.have(U32.is_lt(len, left), left, parts, len, Bytes.Bytes{len, buf})
+    case RbChunk{st}:
+      rb.chunk(ck(piece, st, parts))
+    case RbClose{}:
+      Bf{RbClose{}, Con{piece, parts}, Bytes.new(0)}
+    case RbDone{}:
+      Bf{RbDone{}, parts, piece}
+    case RbBad{}:
+      Bf{RbBad{}, parts, piece}
+
+# RFC 9112 §8: only a close-delimited body may end at close.
+def rb.eof(rb: Rb) -> Bool:
+  match rb:
+    case RbClose{}:
+      True{}
+    case RbDone{}:
+      True{}
+    case RbLen{n}:
+      False{}
+    case RbChunk{st}:
+      False{}
+    case RbBad{}:
+      False{}
+
+def rb.body(parts: List<&1, Bytes.Bytes>) -> String:
+  Bytes.to_string(Bytes.concat(List.reverse(&1, Bytes.Bytes, parts)))
+
+# The head scan. Seek: look for the blank line from byte from; k interim heads are behind.
+# Wait: no blank line yet. Res: the final head, how its body ends, and the bytes after it.
+type Hs is Type:
+  HsSeek{buf: Bytes.Bytes, from: U32, k: U32}
+  HsWait{buf: Bytes.Bytes, k: U32}
+  HsBad{}
+  HsRes{res: Res, rb: Rb, rest: Bytes.Bytes}
+
+def hs.final(+status: U32, +h: Map<&2, List<&2, String>>, rest: Bytes.Bytes, m: Maybe<&2, Rb>) -> Hs:
+  match m:
     case None{}:
-      NeedNow{}
-    case Some{+n}:
-      need.fields(hlen, frame.nobody(n, head), parse.headers(headers, FieldsOk{empty()}))
+      HsBad{}
+    case Some{rb}:
+      HsRes{Res{status, h, ""}, rb, rest}
 
-def need.start3(mpv: String & String & String, headers: List<&2, String>, hlen: Nat, head: Bool) -> Need:
-  (ver, code, reason) = mpv
-  need.num(parse_u32(code), headers, hlen, head)
+def hs.skip(more: Bool, +k: U32, rest: Bytes.Bytes) -> Hs:
+  match more:
+    case True{}:
+      HsSeek{rest, 0, (k + 1 : U32)}
+    case False{}:
+      HsBad{}
 
-def need.lines(xs: List<&2, String>, hlen: Nat, head: Bool) -> Need:
+def hs.pick(interim: Bool, +head: Bool, +k: U32, +status: U32, +h: Map<&2, List<&2, String>>, rest: Bytes.Bytes) -> Hs:
+  match interim:
+    case True{}:
+      hs.skip(U32.is_lt(k, 8), k, rest)
+    case False{}:
+      hs.final(status, h, rest, rb.of(h, frame.nobody(status, head)))
+
+def hs.res(+head: Bool, +k: U32, rest: Bytes.Bytes, res: Res) -> Hs:
+  Res{+status, +h, body} = res
+  hs.pick(frame.interim(status), head, k, status, h, rest)
+
+# The head alone, framed as a HEAD response so it stops at the blank line.
+def hs.parsed(+head: Bool, +k: U32, rest: Bytes.Bytes, f: Frame) -> Hs:
+  match f:
+    case FrameDone{res}:
+      hs.res(head, k, rest, res)
+    case FrameBad{}:
+      HsBad{}
+    case FrameMore{}:
+      HsBad{}
+
+def hs.split(+head: Bool, +k: U32, +hlen: U32, +len: U32, r: Bytes.Bytes & Bytes.Bytes) -> Hs:
+  (buf, hb) = r
+  hs.parsed(head, k, bytes.snd(Bytes.slice(buf, hlen, (len - hlen : U32))), parse.res.of(split_at_blank(Bytes.to_string(hb)), False{}, True{}))
+
+def hs.hit(+head: Bool, +k: U32, +len: U32, buf: Bytes.Bytes, at: Maybe<&2, U32>) -> Hs:
+  match at:
+    case None{}:
+      HsWait{buf, k}
+    case Some{+i}:
+      +hlen = (i + 4 : U32)
+      hs.split(head, k, hlen, len, Bytes.slice(buf, 0, hlen))
+
+def hs.seek.of(+head: Bool, +k: U32, +len: U32, +from: U32, buf: Bytes.Bytes, r: Bytes.Bytes & Maybe<&2, U32>) -> Hs:
+  (tail, m) = r
+  hs.hit(head, k, len, buf, found.at(from, m))
+
+def hs.seek(+head: Bool, +k: U32, +len: U32, +from: U32, r: Bytes.Bytes & Bytes.Bytes) -> Hs:
+  (buf, tail) = r
+  hs.seek.of(head, k, len, from, buf, Bytes.find(tail, "\r\n\r\n"))
+
+def hs.step(+head: Bool, st: Hs) -> Hs:
+  match st:
+    case HsSeek{buf, +from, +k}:
+      Bytes.Bytes{+len, b} = buf
+      hs.seek(head, k, len, from, Bytes.slice(Bytes.Bytes{len, b}, from, (len - from : U32)))
+    case HsWait{buf, k}:
+      HsWait{buf, k}
+    case HsBad{}:
+      HsBad{}
+    case HsRes{res, rb, rest}:
+      HsRes{res, rb, rest}
+
+# Each step ends the scan or passes one interim head, and at most 8 interim heads pass.
+def hs.scan(fuel: Nat, +head: Bool, st: Hs) -> Hs:
+  match fuel:
+    case 0n:
+      match st:
+        case HsSeek{buf, from, k}:
+          HsBad{}
+        case HsWait{buf, k}:
+          HsWait{buf, k}
+        case HsBad{}:
+          HsBad{}
+        case HsRes{res, rb, rest}:
+          HsRes{res, rb, rest}
+    case 1n+f:
+      hs.scan(f, head, hs.step(head, st))
+
+# piece joins buf; only the new bytes, and the 3 before them, can finish the blank line.
+def hs.more(+head: Bool, +k: U32, buf: Bytes.Bytes, piece: Bytes.Bytes) -> Hs:
+  Bytes.Bytes{+ol, ob} = buf
+  hs.scan(10n, head, HsSeek{Bytes.append(Bytes.Bytes{ol, ob}, piece), Bool.pick(U32, U32.is_lt(ol, 3), 0, (ol - 3 : U32)), k})
+
+# A response read in pieces. Head: the head is not whole yet. Body: it is, and parts is the body so far.
+type Rv is Type:
+  RvHead{buf: Bytes.Bytes, k: U32}
+  RvBody{res: Res, rb: Rb, parts: List<&1, Bytes.Bytes>}
+
+# More: read on. Done: the response, and the bytes after it when the body is self-delimited.
+type Rt is Type:
+  RtMore{rv: Rv}
+  RtBad{}
+  RtDone{res: Res, rest: Maybe<&2, String>}
+
+def rv.start() -> Rv:
+  RvHead{Bytes.new(0), 0}
+
+def rv.done(res: Res, parts: List<&1, Bytes.Bytes>, rest: Maybe<&2, String>) -> Rt:
+  Res{status, headers, body} = res
+  RtDone{Res{status, headers, rb.body(parts)}, rest}
+
+def rv.fed(res: Res, bf: Bf) -> Rt:
+  Bf{rb, parts, rest} = bf
+  match rb:
+    case RbDone{}:
+      rv.done(res, parts, Some{Bytes.to_string(rest)})
+    case RbBad{}:
+      RtBad{}
+    case RbLen{n}:
+      RtMore{RvBody{res, RbLen{n}, parts}}
+    case RbChunk{st}:
+      RtMore{RvBody{res, RbChunk{st}, parts}}
+    case RbClose{}:
+      RtMore{RvBody{res, RbClose{}, parts}}
+
+def rv.head(hs: Hs) -> Rt:
+  match hs:
+    case HsWait{buf, k}:
+      RtMore{RvHead{buf, k}}
+    case HsBad{}:
+      RtBad{}
+    case HsSeek{buf, from, k}:
+      RtBad{}
+    case HsRes{res, rb, rest}:
+      rv.fed(res, rb.feed(rb, Nil{}, rest))
+
+def rv.eof(res: Res, parts: List<&1, Bytes.Bytes>, ok: Bool) -> Rt:
+  match ok:
+    case True{}:
+      rv.done(res, parts, None{})
+    case False{}:
+      RtBad{}
+
+# One read: piece, or the server closed (RFC 9112 §8: a message cut short is not a message).
+def rv.step(closed: Bool, +head: Bool, rv: Rv, piece: Bytes.Bytes) -> Rt:
+  match closed:
+    case True{}:
+      match rv:
+        case RvHead{buf, k}:
+          RtBad{}
+        case RvBody{res, rb, parts}:
+          rv.eof(res, parts, rb.eof(rb))
+    case False{}:
+      match rv:
+        case RvHead{buf, +k}:
+          rv.head(hs.more(head, k, buf, piece))
+        case RvBody{res, rb, parts}:
+          rv.fed(res, rb.feed(rb, parts, piece))
+
+def rv.end(closed: Bool, +head: Bool, t: Rt) -> Rt:
+  match closed:
+    case False{}:
+      t
+    case True{}:
+      match t:
+        case RtMore{rv}:
+          rv.step(True{}, head, rv, Bytes.new(0))
+        case RtBad{}:
+          RtBad{}
+        case RtDone{res, rest}:
+          RtDone{res, rest}
+
+def rv.go(xs: List<&2, String>, closed: Bool, +head: Bool, t: Rt) -> Rt:
   match xs:
     case Nil{}:
-      NeedNow{}
-    case Con{line, headers}:
-      need.start3(start_line(line), headers, hlen, head)
+      rv.end(closed, head, t)
+    case Con{+x, rest}:
+      match t:
+        case RtMore{rv}:
+          rv.go(rest, closed, head, rv.step(False{}, head, rv, Bytes.from_string(x)))
+        case RtBad{}:
+          RtBad{}
+        case RtDone{res, r}:
+          RtDone{res, r}
 
-def need.blank(+hd: String, head: Bool, ok: Bool) -> Need:
-  match ok:
-    case False{}:
-      NeedHead{}
-    case True{}:
-      need.lines(String.lines(hd), String.length(hd), head)
+def rt.frame(t: Rt) -> Frame:
+  match t:
+    case RtMore{rv}:
+      FrameMore{}
+    case RtBad{}:
+      FrameBad{}
+    case RtDone{res, rest}:
+      FrameDone{res}
 
-def need.of(hb: String & String, head: Bool) -> Need:
-  (+hd, rest) = hb
-  need.blank(hd, head, String.ends_with(hd, "\r\n\r\n"))
+# What the read loop makes of these pieces, then a close when closed is set.
+def res.frame(xs: List<&2, String>, closed: Bool, +head: Bool) -> Frame:
+  rt.frame(rv.go(xs, closed, head, RtMore{rv.start()}))
 
-# A hint only: frame() stays the judge of every byte.
-def need(raw: String, head: Bool) -> Need:
-  need.of(split_at_blank(raw), head)
-
-def after.rest(hb: String & String) -> String:
-  (hd, rest) = hb
-  rest
-
-def after.chunk(hb: String & String) -> Maybe<&2, String>:
-  (hd, rest) = hb
-  chunk.suffix(rest)
-
-def after.need(+raw: String, n: Need) -> Maybe<&2, String>:
-  match n:
-    case NeedHead{}:
+def rt.rest(t: Rt) -> Maybe<&2, String>:
+  match t:
+    case RtMore{rv}:
       None{}
-    case NeedLen{t}:
-      Some{String.drop(raw, t)}
-    case NeedChunk{}:
-      after.chunk(split_at_blank(raw))
-    case NeedClose{}:
+    case RtBad{}:
       None{}
-    case NeedNow{}:
-      Some{after.rest(split_at_blank(raw))}
-
-def after.go(+raw: String, n: Need, f: Frame) -> Maybe<&2, String>:
-  match f:
-    case FrameMore{}:
-      None{}
-    case FrameBad{}:
-      None{}
-    case FrameDone{res}:
-      after.need(raw, n)
+    case RtDone{res, rest}:
+      rest
 
 # Bytes after a complete self-delimited message. None if it is not one yet.
 def after(+raw: String, +head: Bool) -> Maybe<&2, String>:
-  after.go(raw, need(raw, head), frame(raw, False{}, head))
+  rt.rest(rv.go([raw], False{}, head, RtMore{rv.start()}))
 
 def req.v11.ver(mpv: String & String & String) -> Bool:
   (+method, path, v) = mpv
@@ -1296,13 +1579,12 @@ def redirect.if(status: U32, h: Hop, loc: String, ok: Bool) -> Maybe<&2, Hop>:
 def redirect(+status: U32, +headers: Map<&2, List<&2, String>>, h: Hop) -> Maybe<&2, Hop>:
   redirect.if(status, h, header(headers, "location"), Bool.and(redirect.code(status), has_header(headers, "location")))
 
-# Transport: plain TCP or TLS over the same socket.
-def io.recv(tls: Bool, s: Socket, max: U32, ms: U32) -> IO(Socket & Result<&1, &1, U32 & String, String>):
+def io.recv.words(tls: Bool, s: Socket, max: U32, ms: U32) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
   match tls:
     case True{}:
-      Wire.tls.recv(s, max, ms)
+      Wire.tls.recv.words(s, max, ms)
     case False{}:
-      Wire.recv(s, max, ms)
+      Wire.recv.words(s, max, ms)
 
 def io.send(tls: Bool, s: Socket, data: String) -> IO(Socket & Result<&1, &1, U32 & String, Unit>):
   match tls:
@@ -1323,111 +1605,9 @@ def fetch.close(tls: Bool, s: Socket, r: Result<&2, &2, Err, Res>) -> IO(Result<
     io.close(tls, s)
     return r
 
-def fetch.fail(e: Err) -> IO(Result<&2, &2, Err, Res>):
-  IO.pure(Result<&2, &2, Err, Res>, Fail{e})
-
-def fetch.cap(f: Frame, over: Bool) -> Frame:
-  match over:
-    case True{}:
-      FrameBad{}
-    case False{}:
-      f
-
 # Untrusted servers must not grow the buffer without bound.
 def fetch.max() -> Nat:
   U32.to_nat(16777216)
-
-# Read state: bytes so far reversed (appends are cheap), their count, the
-# framing hint, the last verdict, and a wire error if the read itself failed.
-type Rd is Data:
-  Rd{rbuf: String, n: Nat, need: Need, f: Frame, err: Maybe<&2, Err>}
-
-# The hint is worked out once, when the header block has arrived.
-def fetch.need(hint: Need, +rbuf: String, head: Bool) -> Need:
-  match hint:
-    case NeedHead{}:
-      need(String.reverse(rbuf), head)
-    case NeedLen{t}:
-      NeedLen{t}
-    case NeedChunk{}:
-      NeedChunk{}
-    case NeedClose{}:
-      NeedClose{}
-    case NeedNow{}:
-      NeedNow{}
-
-# Could the buffer hold a whole response now? A yes may be wrong (frame then
-# says More); a no must never be.
-def fetch.gate(closed: Bool, need: Need, +n: Nat, +got: String) -> Bool:
-  match closed:
-    case True{}:
-      True{}
-    case False{}:
-      match need:
-        case NeedHead{}:
-          False{}
-        case NeedLen{t}:
-          Nat.is_le(t, n)
-        case NeedChunk{}:
-          Bool.or(Nat.is_lt(String.length(got), 4n), String.ends_with(got, "\r\n\r\n"))
-        case NeedClose{}:
-          False{}
-        case NeedNow{}:
-          True{}
-
-def fetch.try.gate(gate: Bool, rbuf: String, closed: Bool, head: Bool) -> Frame:
-  match gate:
-    case True{}:
-      frame(String.reverse(rbuf), closed, head)
-    case False{}:
-      FrameMore{}
-
-def fetch.chunked(need: Need) -> Bool:
-  match need:
-    case NeedChunk{}:
-      True{}
-    case NeedHead{}:
-      False{}
-    case NeedLen{t}:
-      False{}
-    case NeedClose{}:
-      False{}
-    case NeedNow{}:
-      False{}
-
-# A bad chunk does not end in CRLF CRLF, so the gate must not skip it.
-def fetch.try.go(gate: Bool, chunked: Bool, rbuf: String, closed: Bool, head: Bool) -> Frame:
-  match chunked:
-    case True{}:
-      frame(String.reverse(rbuf), closed, head)
-    case False{}:
-      fetch.try.gate(gate, rbuf, closed, head)
-
-def fetch.try(gate: Bool, need: Need, rbuf: String, closed: Bool, head: Bool) -> Frame:
-  fetch.try.go(gate, fetch.chunked(need), rbuf, closed, head)
-
-def fetch.step(+head: Bool, s: Socket, rd: Rd, +got: String, +closed: Bool) -> Socket & Rd:
-  Rd{rbuf, n, need, f, err} = rd
-  +rbuf2 = {String.reverse(got) ++ rbuf : String}
-  +n2 = Nat.add(n, String.length(got))
-  +need2 = fetch.need(need, rbuf2, head)
-  (s, Rd{rbuf2, n2, need2, fetch.cap(fetch.try(fetch.gate(closed, need2, n2, got), need2, rbuf2, closed, head), Nat.is_lt(fetch.max(), n2)), None{}})
-
-def fetch.wire(s: Socket, rd: Rd, +code: U32, why: String) -> Socket & Rd:
-  Rd{rbuf, n, need, f, err} = rd
-  (s, Rd{rbuf, n, need, FrameBad{}, Some{err.or_late(code, ErrRead{code, why})}})
-
-
-def fetch.next.go(+head: Bool, s: Socket, rd: Rd, r: Result<&1, &1, U32 & String, String>) -> Socket & Rd:
-  match r:
-    case Fail{(+code, why)}:
-      fetch.wire(s, rd, code, why)
-    case Done{+got}:
-      fetch.step(head, s, rd, got, String.is_empty(got))
-
-def fetch.next(head: Bool, rd: Rd, m: Socket & Result<&1, &1, U32 & String, String>) -> Socket & Rd:
-  (s, r) = m
-  fetch.next.go(head, s, rd, r)
 
 # none: no response byte arrived, so an idempotent request may be retried (RFC 9112 §9.3.1).
 # sock: the socket, when it can take another request.
@@ -1468,30 +1648,68 @@ def fetch.hold.go(tls: Bool, s: Socket, res: Res, left: Maybe<&2, String>, ok: B
     case False{}:
       fetch.shut(tls, s, Done{res}, False{})
 
-def fetch.hold(tls: Bool, +close: Bool, s: Socket, +rbuf: String, head: Bool, res: Res) -> IO(Out):
+def fetch.hold(tls: Bool, +close: Bool, s: Socket, res: Res, +left: Maybe<&2, String>) -> IO(Out):
   Res{status, +headers, body} = res
-  +left = after(String.reverse(rbuf), head)
-  fetch.hold.go(tls, s, res, left, again(close, headers, left))
+  fetch.hold.go(tls, s, Res{status, headers, body}, left, again(close, headers, left))
 
 def fetch.failout(tls: Bool, s: Socket, e: Maybe<&2, Err>, none: Bool) -> IO(Out):
   do IO<Out>:
     r : Result<&2, &2, Err, Res> <- fetch.bad(tls, s, e)
     return fetch.boxed(r, none)
 
-# Reads until frame says Done or Bad; an empty recv means the server closed.
+# Read state: the response so far and the bytes read, or how it ended.
+# none: no byte arrived, so an idempotent request may be retried.
+type Fl is Type:
+  FlMore{rv: Rv, n: U32}
+  FlBad{err: Maybe<&2, Err>, none: Bool}
+  FlDone{res: Res, rest: Maybe<&2, String>}
+
+def fetch.rt(+n: U32, t: Rt) -> Fl:
+  match t:
+    case RtMore{rv}:
+      FlMore{rv, n}
+    case RtBad{}:
+      FlBad{None{}, U32.is_zero(n)}
+    case RtDone{res, rest}:
+      FlDone{res, rest}
+
+# 64 KiB of head past the body cap, as serve allows.
+def fetch.over(+n: U32) -> Bool:
+  Nat.is_lt(Nat.add(fetch.max(), 65536n), U32.to_nat(n))
+
+def fetch.piece.cap(over: Bool, +head: Bool, rv: Rv, +n2: U32, +len: U32, buf: Array<U32>) -> Fl:
+  match over:
+    case True{}:
+      FlBad{None{}, False{}}
+    case False{}:
+      fetch.rt(n2, rv.step(U32.is_zero(len), head, rv, Bytes.Bytes{len, buf}))
+
+def fetch.piece(+head: Bool, rv: Rv, +n: U32, p: U32 & Array<U32>) -> Fl:
+  (+len, buf) = p
+  +n2 = (n + len : U32)
+  fetch.piece.cap(fetch.over(n2), head, rv, n2, len, buf)
+
+def fetch.next(+head: Bool, rv: Rv, +n: U32, m: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> Socket & Fl:
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      (s, FlBad{Some{err.or_late(code, ErrRead{code, why})}, U32.is_zero(n)})
+    case Done{p}:
+      (s, fetch.piece(head, rv, n, p))
+
+# Reads until the response is whole or cannot be; an empty read means the server closed.
 @unsafe
-def fetch.loop(+close: Bool, +head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Out):
-  (s, rd) = st
-  Rd{rbuf, +n, need, f, err} = rd
-  match f:
-    case FrameMore{}:
+def fetch.loop(+close: Bool, +head: Bool, +tls: Bool, +ms: U32, st: Socket & Fl) -> IO(Out):
+  (s, fl) = st
+  match fl:
+    case FlMore{rv, +n}:
       do IO<Out>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
-        fetch.loop(close, head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
-    case FrameBad{}:
-      fetch.failout(tls, s, err, Nat.is_eq(n, 0n))
-    case FrameDone{res}:
-      fetch.hold(tls, close, s, rbuf, head, res)
+        m : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- io.recv.words(tls, s, 65536, ms)
+        fetch.loop(close, head, tls, ms, fetch.next(head, rv, n, m))
+    case FlBad{err, none}:
+      fetch.failout(tls, s, err, none)
+    case FlDone{res, rest}:
+      fetch.hold(tls, close, s, res, rest)
 
 def exchange.sent(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Out):
   (s, r) = m
@@ -1499,7 +1717,7 @@ def exchange.sent(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, m: Socket & R
     case Fail{(+code, why)}:
       fetch.shut(tls, s, Fail{err.or_late(code, ErrWrite{code, why})}, True{})
     case Done{u}:
-      fetch.loop(close, head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
+      fetch.loop(close, head, tls, ms, (s, FlMore{rv.start(), 0}))
 
 def exchange.go(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, s: Socket, wire: String) -> IO(Out):
   do IO<Out>:
@@ -1936,13 +2154,6 @@ def get(url: String) -> IO(Result<&2, &2, Err, Res>):
   fetch("GET", url, empty(), "")
 
 # Streaming (a body read or sent in pieces). Stream bodies are never content-decoded.
-# Len: bytes left. Chunk: the chunk decoder. Close: until the server closes. Done: nothing left.
-type Sf is Data:
-  SfLen{left: Nat}
-  SfChunk{st: Dc}
-  SfClose{}
-  SfDone{}
-
 # What the next read returns: read more, a piece, the end, or an error.
 type Po is Data:
   PoNone{}
@@ -1951,175 +2162,128 @@ type Po is Data:
   PoBad{e: Err}
 
 type Stream is Type:
-  Stream{tls: Bool, s: Socket, ms: U32, res: Res, sf: Sf, out: Po}
-
-def sf.cl(n: Maybe<&2, U32>) -> Maybe<&2, Sf>:
-  match n:
-    case None{}:
-      None{}
-    case Some{+k}:
-      Some{Bool.pick(Sf, U32.is_zero(k), SfDone{}, SfLen{U32.to_nat(k)})}
-
-def sf.te(+h: Map<&2, List<&2, String>>, cl: Bool) -> Maybe<&2, Sf>:
-  match cl:
-    case True{}:
-      None{}
-    case False{}:
-      Some{Bool.pick(Sf, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"), SfChunk{dc.start()}, SfClose{})}
-
-def sf.len(+h: Map<&2, List<&2, String>>, te: Bool) -> Maybe<&2, Sf>:
-  match te:
-    case True{}:
-      sf.te(h, has_header(h, "content-length"))
-    case False{}:
-      Bool.pick(Maybe<&2, Sf>, has_header(h, "content-length"), sf.cl(parse_u32(header(h, "content-length"))), Some{SfClose{}})
-
-# RFC 9112 §6.3: how the body of this response ends. None: it cannot be framed.
-def sf.of(+status: U32, +h: Map<&2, List<&2, String>>, head: Bool, nobody: Bool) -> Maybe<&2, Sf>:
-  match nobody:
-    case True{}:
-      Some{SfDone{}}
-    case False{}:
-      sf.len(h, has_header(h, "transfer-encoding"))
+  Stream{tls: Bool, s: Socket, ms: U32, res: Res, rb: Rb, out: Po}
 
 type Pc is Data:
-  Pc{sf: Sf, out: Po}
+  Pc{rb: Rb, out: Po}
 
-def pc.piece(+sf: Sf, +b: String) -> Pc:
-  Pc{sf, Bool.pick(Po, String.is_empty(b), PoNone{}, PoPiece{b})}
+def pc.piece(+rb: Rb, +b: String) -> Pc:
+  Pc{rb, Bool.pick(Po, String.is_empty(b), PoNone{}, PoPiece{b})}
 
-def pc.len(+left: Nat, +b: String, +n: Nat, all: Bool) -> Pc:
-  match all:
-    case True{}:
-      Pc{SfDone{}, PoPiece{String.take(b, left)}}
-    case False{}:
-      pc.piece(SfLen{Nat.sub(left, n)}, b)
-
-def pc.chunk(o: Dco) -> Pc:
-  Dco{st, racc, rest} = o
+def pc.fed.of(+b: String, st: Rb) -> Pc:
   match st:
-    case DcDone{}:
-      Pc{SfDone{}, PoPiece{String.reverse(racc)}}
-    case DcBad{}:
-      Pc{SfDone{}, PoBad{ErrBad{}}}
-    case DcSize{a, b}:
-      pc.piece(SfChunk{DcSize{a, b}}, String.reverse(racc))
-    case DcExt{x}:
-      pc.piece(SfChunk{DcExt{x}}, String.reverse(racc))
-    case DcSizeLf{x}:
-      pc.piece(SfChunk{DcSizeLf{x}}, String.reverse(racc))
-    case DcData{k}:
-      pc.piece(SfChunk{DcData{k}}, String.reverse(racc))
-    case DcDataCr{}:
-      pc.piece(SfChunk{DcDataCr{}}, String.reverse(racc))
-    case DcDataLf{}:
-      pc.piece(SfChunk{DcDataLf{}}, String.reverse(racc))
-    case DcTr{j}:
-      pc.piece(SfChunk{DcTr{j}}, String.reverse(racc))
+    case RbDone{}:
+      Pc{RbDone{}, Bool.pick(Po, String.is_empty(b), PoEnd{}, PoPiece{b})}
+    case RbBad{}:
+      Pc{RbDone{}, PoBad{ErrBad{}}}
+    case RbLen{n}:
+      pc.piece(RbLen{n}, b)
+    case RbChunk{st}:
+      pc.piece(RbChunk{st}, b)
+    case RbClose{}:
+      pc.piece(RbClose{}, b)
 
-# The body bytes b just arrived: what they add to the body, and how it ends.
-def pc.of(sf: Sf, +b: String) -> Pc:
-  match sf:
-    case SfLen{+left}:
-      +n = String.length(b)
-      pc.len(left, b, n, Nat.is_le(left, n))
-    case SfChunk{st}:
-      pc.chunk(dc.feed(b, st, ""))
-    case SfClose{}:
-      pc.piece(SfClose{}, b)
-    case SfDone{}:
-      Pc{SfDone{}, PoEnd{}}
+def pc.fed(bf: Bf) -> Pc:
+  Bf{st, parts, rest} = bf
+  pc.fed.of(rb.body(parts), st)
+
+# The body bytes that just arrived: what they add to the body, and how it ends.
+def pc.of(rb: Rb, piece: Bytes.Bytes) -> Pc:
+  pc.fed(rb.feed(rb, Nil{}, piece))
 
 # The server closed. Only a close-delimited body may end this way (RFC 9112 §8).
-def pc.eof(sf: Sf) -> Pc:
-  match sf:
-    case SfClose{}:
-      Pc{SfDone{}, PoEnd{}}
-    case SfDone{}:
-      Pc{SfDone{}, PoEnd{}}
-    case SfLen{n}:
-      Pc{SfDone{}, PoBad{ErrBad{}}}
-    case SfChunk{st}:
-      Pc{SfDone{}, PoBad{ErrBad{}}}
+def pc.end(ok: Bool) -> Pc:
+  match ok:
+    case True{}:
+      Pc{RbDone{}, PoEnd{}}
+    case False{}:
+      Pc{RbDone{}, PoBad{ErrBad{}}}
+
+def pc.eof(st: Rb) -> Pc:
+  pc.end(rb.eof(st))
 
 def stream.mk(+tls: Bool, s: Socket, +ms: U32, res: Res, pc: Pc) -> Stream:
-  Pc{sf, out} = pc
-  Stream{tls, s, ms, res, sf, out}
+  Pc{rb, out} = pc
+  Stream{tls, s, ms, res, rb, out}
 
-def stream.got.eof(+tls: Bool, s: Socket, +ms: U32, res: Res, +sf: Sf, +b: String, eof: Bool) -> Stream:
-  match eof:
-    case True{}:
-      stream.mk(tls, s, ms, res, pc.eof(sf))
-    case False{}:
-      stream.mk(tls, s, ms, res, pc.of(sf, b))
+def stream.got.piece(+tls: Bool, s: Socket, +ms: U32, res: Res, +rb: Rb, p: U32 & Array<U32>) -> Stream:
+  (+len, buf) = p
+  stream.mk(tls, s, ms, res, Bool.pick(Pc, U32.is_zero(len), pc.eof(rb), pc.of(rb, Bytes.Bytes{len, buf})))
 
-def stream.got(+tls: Bool, +ms: U32, res: Res, +sf: Sf, m: Socket & Result<&1, &1, U32 & String, String>) -> Stream:
+def stream.got(+tls: Bool, +ms: U32, res: Res, +rb: Rb, m: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> Stream:
   (s, r) = m
   match r:
     case Fail{(+code, why)}:
-      Stream{tls, s, ms, res, SfDone{}, PoBad{err.or_late(code, ErrRead{code, why})}}
-    case Done{+b}:
-      stream.got.eof(tls, s, ms, res, sf, b, String.is_empty(b))
+      Stream{tls, s, ms, res, RbDone{}, PoBad{err.or_late(code, ErrRead{code, why})}}
+    case Done{p}:
+      stream.got.piece(tls, s, ms, res, rb, p)
 
-def stream.after(+sf: Sf) -> Po:
-  match sf:
-    case SfDone{}:
+def stream.after(+rb: Rb) -> Po:
+  match rb:
+    case RbDone{}:
       PoEnd{}
-    case SfLen{n}:
+    case RbBad{}:
+      PoEnd{}
+    case RbLen{n}:
       PoNone{}
-    case SfChunk{st}:
+    case RbChunk{st}:
       PoNone{}
-    case SfClose{}:
+    case RbClose{}:
       PoNone{}
 
 # The next piece of the body; None at the end. A piece is never empty.
 @unsafe
 def stream.read(st: Stream) -> IO(Stream & Result<&2, &2, Err, Maybe<&2, String>>):
-  Stream{+tls, s, +ms, res, +sf, out} = st
+  Stream{+tls, s, +ms, res, +rb, out} = st
   match out:
     case PoPiece{b}:
-      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, stream.after(sf)}, Done{Some{b}}))
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, rb, stream.after(rb)}, Done{Some{b}}))
     case PoEnd{}:
-      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, PoEnd{}}, Done{None{}}))
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, rb, PoEnd{}}, Done{None{}}))
     case PoBad{+e}:
-      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, PoBad{e}}, Fail{e}))
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, rb, PoBad{e}}, Fail{e}))
     case PoNone{}:
       do IO<Stream & Result<&2, &2, Err, Maybe<&2, String>>>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
-        stream.read(stream.got(tls, ms, res, sf, m))
+        m : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- io.recv.words(tls, s, 65536, ms)
+        stream.read(stream.got(tls, ms, res, rb, m))
 
 # Status and headers. Its body is "": read the body with stream.read.
 def stream.res(st: Stream) -> Stream & Res:
-  Stream{tls, s, ms, +res, sf, out} = st
-  (Stream{tls, s, ms, res, sf, out}, res)
+  Stream{tls, s, ms, +res, rb, out} = st
+  (Stream{tls, s, ms, res, rb, out}, res)
 
 def stream.close(st: Stream) -> IO(Unit):
-  Stream{tls, s, ms, res, sf, out} = st
+  Stream{tls, s, ms, res, rb, out} = st
   io.close(tls, s)
 
-# ponytail: 8 interim responses, as frame allows
-def skip.interim(fuel: Nat, +raw: String) -> String:
-  match fuel:
-    case 0n:
-      raw
-    case 1n+f:
-      skip.interim(f, frame.at.cont(raw, frame.lead(split_at_blank(raw))))
+# Head read state: still scanning, cut short or bad, or the head with the bytes after it.
+type Sh is Type:
+  ShMore{buf: Bytes.Bytes, k: U32}
+  ShBad{err: Maybe<&2, Err>}
+  ShRes{res: Res, rb: Rb, rest: Bytes.Bytes}
 
-def body.start(+raw: String) -> String:
-  after.rest(split_at_blank(skip.interim(8n, raw)))
+def sh.of(hs: Hs) -> Sh:
+  match hs:
+    case HsWait{buf, k}:
+      ShMore{buf, k}
+    case HsBad{}:
+      ShBad{None{}}
+    case HsSeek{buf, from, k}:
+      ShBad{None{}}
+    case HsRes{res, rb, rest}:
+      ShRes{res, rb, rest}
 
-def stream.framed(+tls: Bool, s: Socket, +ms: U32, +res: Res, +rest: String, m: Maybe<&2, Sf>) -> IO(Result<&1, &1, Err, Stream>):
-  match m:
-    case None{}:
-      do IO<Result<&1, &1, Err, Stream>>:
-        io.close(tls, s)
-        return Fail{ErrBad{}}
-    case Some{sf}:
-      IO.pure(Result<&1, &1, Err, Stream>, Done{stream.mk(tls, s, ms, res, pc.of(sf, rest))})
+def sh.piece(+head: Bool, buf: Bytes.Bytes, +k: U32, p: U32 & Array<U32>) -> Sh:
+  (+len, b) = p
+  Bool.pick(Sh, U32.is_zero(len), ShBad{None{}}, sh.of(hs.more(head, k, buf, Bytes.Bytes{len, b})))
 
-def stream.begin(+tls: Bool, s: Socket, +ms: U32, +head: Bool, +res: Res, +raw: String) -> IO(Result<&1, &1, Err, Stream>):
-  Res{+status, +headers, body} = res
-  stream.framed(tls, s, ms, res, body.start(raw), sf.of(status, headers, head, frame.nobody(status, head)))
+def sh.next(+head: Bool, buf: Bytes.Bytes, +k: U32, m: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> Socket & Sh:
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      (s, ShBad{Some{err.or_late(code, ErrRead{code, why})}})
+    case Done{p}:
+      (s, sh.piece(head, buf, k, p))
 
 def fetch.fail.of(r: Result<&2, &2, Err, Res>) -> Result<&1, &1, Err, Stream>:
   match r:
@@ -2128,23 +2292,21 @@ def fetch.fail.of(r: Result<&2, &2, Err, Res>) -> Result<&1, &1, Err, Stream>:
     case Done{res}:
       Fail{ErrBad{}}
 
-# Reads until the head is in. Framing it as a HEAD response stops at the blank line.
+# Reads until the final head is in; the body bytes that came with it are the first piece.
 @unsafe
-def stream.head(+tls: Bool, +ms: U32, +head: Bool, st: Socket & Rd) -> IO(Result<&1, &1, Err, Stream>):
-  (s, rd) = st
-  Rd{rbuf, n, need, f, err} = rd
-  match f:
-    case FrameMore{}:
+def stream.head(+tls: Bool, +ms: U32, +head: Bool, st: Socket & Sh) -> IO(Result<&1, &1, Err, Stream>):
+  (s, sh) = st
+  match sh:
+    case ShMore{buf, +k}:
       do IO<Result<&1, &1, Err, Stream>>:
-        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
-        stream.head(tls, ms, head, fetch.next(True{}, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
-    case FrameBad{}:
+        m : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- io.recv.words(tls, s, 65536, ms)
+        stream.head(tls, ms, head, sh.next(head, buf, k, m))
+    case ShBad{err}:
       do IO<Result<&1, &1, Err, Stream>>:
         r : Result<&2, &2, Err, Res> <- fetch.bad(tls, s, err)
         return fetch.fail.of(r)
-    case FrameDone{res}:
-      stream.begin(tls, s, ms, head, res, String.reverse(rbuf))
-
+    case ShRes{res, rb, rest}:
+      IO.pure(Result<&1, &1, Err, Stream>, Done{stream.mk(tls, s, ms, res, pc.of(rb, rest))})
 
 def stream.sent(+tls: Bool, +ms: U32, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&1, &1, Err, Stream>):
   (s, r) = m
@@ -2154,7 +2316,7 @@ def stream.sent(+tls: Bool, +ms: U32, +head: Bool, m: Socket & Result<&1, &1, U3
         io.close(tls, s)
         return Fail{err.or_late(code, ErrWrite{code, why})}
     case Done{u}:
-      stream.head(tls, ms, head, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
+      stream.head(tls, ms, head, (s, ShMore{Bytes.new(0), 0}))
 
 def stream.conn(r: Result<&1, &1, Err, Conn>, +ms: U32, +head: Bool, wire: String) -> IO(Result<&1, &1, Err, Stream>):
   match r:
@@ -2394,78 +2556,6 @@ def reply_fail(s: Socket, +status: U32) -> IO(Unit):
     reply.sent.close(sent)
 
 
-# A chunked body decoded from piece[i..]: a data run is sliced whole, and every other byte steps dc.
-type Cs is Type:
-  Cs{piece: Bytes.Bytes, i: U32, st: Dc, parts: List<&1, Bytes.Bytes>}
-
-# st: where the decoder stopped. parts: the data so far, newest first. rest: the bytes after a Done body.
-type Ck is Type:
-  Ck{st: Dc, parts: List<&1, Bytes.Bytes>, rest: Bytes.Bytes}
-
-def ck.next(+len: U32, +i: U32, +st: Dc, piece: Bytes.Bytes, parts: List<&1, Bytes.Bytes>) -> Bool & Cs:
-  (Bool.and(U32.is_lt(i, len), dc.live(st)), Cs{piece, i, st, parts})
-
-def ck.data(+len: U32, +i: U32, +k: U32, +m: U32, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Bytes.Bytes) -> Bool & Cs:
-  (piece, run) = r
-  ck.next(len, (i + m : U32), dc.data(k, m), piece, Con{run, parts})
-
-def ck.byte(+len: U32, +i: U32, st: Dc, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Maybe<&2, U32>) -> Bool & Cs:
-  (piece, m) = r
-  match m:
-    case None{}:
-      ck.next(len, i, DcBad{}, piece, parts)
-    case Some{+c}:
-      ck.next(len, (i + 1 : U32), dc.step(st, c), piece, parts)
-
-def ck.step(+len: U32, cs: Cs) -> Bool & Cs:
-  Cs{piece, +i, st, parts} = cs
-  match st:
-    case DcData{+k}:
-      +m = U32.min(k, (len - i : U32))
-      ck.data(len, i, k, m, parts, Bytes.slice(piece, i, m))
-    case DcDone{}:
-      (False{}, Cs{piece, i, DcDone{}, parts})
-    case DcBad{}:
-      (False{}, Cs{piece, i, DcBad{}, parts})
-    case DcSize{+acc, seen}:
-      ck.byte(len, i, DcSize{acc, seen}, parts, Bytes.get(piece, i))
-    case DcExt{+n}:
-      ck.byte(len, i, DcExt{n}, parts, Bytes.get(piece, i))
-    case DcSizeLf{+n}:
-      ck.byte(len, i, DcSizeLf{n}, parts, Bytes.get(piece, i))
-    case DcDataCr{}:
-      ck.byte(len, i, DcDataCr{}, parts, Bytes.get(piece, i))
-    case DcDataLf{}:
-      ck.byte(len, i, DcDataLf{}, parts, Bytes.get(piece, i))
-    case DcTr{+j}:
-      ck.byte(len, i, DcTr{j}, parts, Bytes.get(piece, i))
-
-def ck.rest(st: Dc, parts: List<&1, Bytes.Bytes>, r: Bytes.Bytes & Bytes.Bytes) -> Ck:
-  (piece, rest) = r
-  Ck{st, parts, rest}
-
-def ck.end(+len: U32, cs: Cs) -> Ck:
-  Cs{piece, +i, st, parts} = cs
-  ck.rest(st, parts, Bytes.slice(piece, i, (len - i : U32)))
-
-# Each step reads at least one byte, so len steps are enough.
-def ck.feed(f: Nat, +len: U32, r: Bool & Cs) -> Ck:
-  match f:
-    case 0n:
-      (go, cs) = r
-      ck.end(len, cs)
-    case 1n+p:
-      (go, cs) = r
-      match go:
-        case False{}:
-          ck.end(len, cs)
-        case True{}:
-          ck.feed(p, len, ck.step(len, cs))
-
-def ck(piece: Bytes.Bytes, +st: Dc, parts: List<&1, Bytes.Bytes>) -> Ck:
-  Bytes.Bytes{+len, buf} = piece
-  ck.feed(U32.to_nat(len), len, ck.next(len, 0, st, Bytes.Bytes{len, buf}, parts))
-
 # The head is parsed once, when it is whole. Body pieces are kept as they come and joined once.
 type Sv is Type:
   SvHead{buf: Bytes.Bytes}
@@ -2484,10 +2574,6 @@ def serve.max() -> Nat:
 
 def sv.none() -> Sv:
   SvHead{Bytes.new(0)}
-
-def bytes.snd(r: Bytes.Bytes & Bytes.Bytes) -> Bytes.Bytes:
-  (a, b) = r
-  b
 
 def sv.body(req: Req, +v11: Bool, parts: List<&1, Bytes.Bytes>, rest: Bytes.Bytes) -> Turn:
   Req{method, path, headers, body} = req
@@ -2623,16 +2709,9 @@ def sv.hit(+max: Nat, +len: U32, buf: Bytes.Bytes, at: Maybe<&2, U32>) -> Turn:
       +hlen = (i + 4 : U32)
       sv.hit.some(U32.is_lt(65536, hlen), max, hlen, len, buf)
 
-def sv.found(+from: U32, m: Maybe<&2, U32>) -> Maybe<&2, U32>:
-  match m:
-    case None{}:
-      None{}
-    case Some{+j}:
-      Some{(from + j : U32)}
-
 def sv.seek.of(+max: Nat, +len: U32, +from: U32, buf: Bytes.Bytes, r: Bytes.Bytes & Maybe<&2, U32>) -> Turn:
   (tail, m) = r
-  sv.hit(max, len, buf, sv.found(from, m))
+  sv.hit(max, len, buf, found.at(from, m))
 
 def sv.seek(+max: Nat, +len: U32, +from: U32, r: Bytes.Bytes & Bytes.Bytes) -> Turn:
   (buf, tail) = r
