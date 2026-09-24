@@ -2,6 +2,7 @@ import Base
 import ./http.bend as Http
 import ./url/url.bend as Url
 import ./json/json.bend as Json
+import ./bytes/bytes.bend as Bytes
 
 # LAW: the text after a blank line is the body.
 law body_after_blank:
@@ -202,10 +203,6 @@ law frame_te_gzip_more:
 law frame_te_gzip_close:
   {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{})) == Some{"abc"} : Maybe<&2, String>}
 
-# The read loop frames a bad chunk even when the gate is shut.
-law fetch_bad_chunk_now:
-  {Http.fetch.try(False{}, Http.NeedChunk{}, String.reverse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nG\r\n"), False{}, False{}) == Http.FrameBad{} : Http.Frame}
-
 law text_utf8:
   {Http.text(Http.Res{200, Http.empty(), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}}) == "é" : String}
 
@@ -239,9 +236,6 @@ law policy_error:
 
 law policy_error_ok:
   {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{200, Http.empty(), ""}}) == Http.NDone{Done{Http.Res{200, Http.empty(), ""}}} : Http.Next}
-law fetch_short_chunk_more:
-  {Http.fetch.try(False{}, Http.NeedChunk{}, String.reverse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"), False{}, False{}) == Http.FrameMore{} : Http.Frame}
-
 def hints(n: Nat) -> String:
   match n:
     case 0n:
@@ -325,37 +319,6 @@ law redirect_no_location_none:
 law redirect_other_scheme_none:
   {Http.redirect(301, Http.set(Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
 
-# The hint: the header block is not complete yet.
-law need_head:
-  {Http.need("HTTP/1.1 200 OK\r\nContent-", False{}) == Http.NeedHead{} : Http.Need}
-
-# Content-Length: the whole message is the header block plus the body.
-law need_len:
-  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhe", False{}) == Http.NeedLen{43n} : Http.Need}
-
-law need_chunk:
-  {Http.need("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhe", False{}) == Http.NeedChunk{} : Http.Need}
-
-law need_close:
-  {Http.need("HTTP/1.1 200 OK\r\n\r\nabc", False{}) == Http.NeedClose{} : Http.Need}
-
-# HEAD, 1xx, 204, 304: frame at once.
-law need_head_request:
-  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", True{}) == Http.NeedNow{} : Http.Need}
-
-law need_204:
-  {Http.need("HTTP/1.1 204 No Content\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
-
-# Malformed framing: frame at once and let it say Bad.
-law need_cl_te:
-  {Http.need("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
-
-law need_bad_status:
-  {Http.need("HTTP/1.1 abc\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
-
-law need_te_gzip:
-  {Http.need("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", False{}) == Http.NeedClose{} : Http.Need}
-
 law after_cl:
   {Http.after("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
 
@@ -367,31 +330,6 @@ law after_close_none:
 
 law after_204:
   {Http.after("HTTP/1.1 204 No Content\r\n\r\nNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
-
-# The gate opens once Content-Length bytes are in, never before.
-law gate_len_reached:
-  {Http.fetch.gate(False{}, Http.NeedLen{43n}, 43n, "x") == True{} : Bool}
-
-law gate_len_short:
-  {Http.fetch.gate(False{}, Http.NeedLen{43n}, 42n, "x") == False{} : Bool}
-
-# A complete chunked message ends in CRLF CRLF.
-law gate_chunk_end:
-  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "0\r\n\r\n") == True{} : Bool}
-
-law gate_chunk_mid:
-  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "hello") == False{} : Bool}
-
-# A piece under 4 bytes may finish a CRLF CRLF split across reads.
-law gate_chunk_tiny_piece:
-  {Http.fetch.gate(False{}, Http.NeedChunk{}, 99n, "\n") == True{} : Bool}
-
-law gate_close_waits:
-  {Http.fetch.gate(False{}, Http.NeedClose{}, 99n, "x") == False{} : Bool}
-
-# After close, frame always decides.
-law gate_closed_always:
-  {Http.fetch.gate(True{}, Http.NeedHead{}, 0n, "") == True{} : Bool}
 
 # A macOS ETIMEDOUT is a timeout, not a connect error.
 law err_timeout_mac:
@@ -555,46 +493,6 @@ law accept_enc_default:
 law accept_enc_caller:
   {Http.header(Http.accept.enc(Http.set(Http.empty(), "accept-encoding", "identity")), "accept-encoding") == "identity" : String}
 
-# RFC 9112 §6.3 (6): Content-Length counts the body.
-law stream_cl:
-  {Http.sf.of(200, Http.set(Http.empty(), "content-length", "5"), False{}, False{}) == Some{Http.SfLen{5n}} : Maybe<&2, Http.Sf>}
-
-# RFC 9112 §6.3 (4): chunked is decoded as it arrives.
-law stream_chunked:
-  {Http.sf.of(200, Http.set(Http.empty(), "transfer-encoding", "chunked"), False{}, False{}) == Some{Http.SfChunk{Http.dc.start()}} : Maybe<&2, Http.Sf>}
-
-# RFC 9112 §6.1: Content-Length with Transfer-Encoding cannot be framed.
-law stream_cl_te:
-  {Http.sf.of(200, Http.set(Http.set(Http.empty(), "content-length", "5"), "transfer-encoding", "chunked"), False{}, False{}) == None{} : Maybe<&2, Http.Sf>}
-
-# RFC 9112 §6.3 (8): no framing header means the body runs to close.
-law stream_close:
-  {Http.sf.of(200, Http.empty(), False{}, False{}) == Some{Http.SfClose{}} : Maybe<&2, Http.Sf>}
-
-# RFC 9112 §6.3 (1): 204 has no body.
-law stream_nobody:
-  {Http.sf.of(204, Http.set(Http.empty(), "content-length", "5"), False{}, True{}) == Some{Http.SfDone{}} : Maybe<&2, Http.Sf>}
-
-# A Content-Length body stops at its length; bytes past it are not body.
-law stream_len_split:
-  {Http.pc.of(Http.SfLen{3n}, "abcdef") == Http.Pc{Http.SfDone{}, Http.PoPiece{"abc"}} : Http.Pc}
-
-# A short read is a piece, and the rest is still owed.
-law stream_len_more:
-  {Http.pc.of(Http.SfLen{5n}, "ab") == Http.Pc{Http.SfLen{3n}, Http.PoPiece{"ab"}} : Http.Pc}
-
-# A chunk split across reads gives the bytes that have arrived.
-law stream_chunk_piece:
-  {Http.pc.of(Http.SfChunk{Http.dc.start()}, "5\r\nhel") == Http.Pc{Http.SfChunk{Http.DcData{2}}, Http.PoPiece{"hel"}} : Http.Pc}
-
-# RFC 9112 §8: a close before Content-Length is met is an error.
-law stream_len_cut:
-  {Http.pc.eof(Http.SfLen{3n}) == Http.Pc{Http.SfDone{}, Http.PoBad{Http.ErrBad{}}} : Http.Pc}
-
-# 1xx heads before the final response are not body.
-law stream_interim:
-  {Http.body.start("HTTP/1.1 103 Early Hints\r\n\r\nHTTP/1.1 200 OK\r\n\r\nbody") == "body" : String}
-
 # Chunk sizes are hex without leading zeros.
 law hex_chunk_size:
   {Http.hex(4096) == "1000" : String}
@@ -618,3 +516,163 @@ law serve_chunk_run:
 # RFC 9112 §8: a request cut short is not a request.
 law serve_cl_short:
   {Http.serve.frame(["POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhell"]) == None{} : Maybe<&1, String & String>}
+
+def bytewise(s: String) -> List<&2, String>:
+  match s:
+    case SNil{}:
+      Nil{}
+    case SCon{c, t}:
+      Con{SCon{c, SNil{}}, bytewise(t)}
+
+# The read loop frames a response as frame does, whole or one byte per read.
+law loop_head_more_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-", False{}, False{}) : Http.Frame}
+
+law loop_head_cut_bad_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-"], True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-", True{}, False{}) : Http.Frame}
+
+law loop_head_cut_bad_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nContent-"), True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-", True{}, False{}) : Http.Frame}
+
+law loop_cl_more_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi", False{}, False{}) : Http.Frame}
+
+law loop_cl_more_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi", False{}, False{}) : Http.Frame}
+
+law loop_cl_cut_bad_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi"], True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nhi", True{}, False{}) : Http.Frame}
+
+law loop_cl_done_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT", False{}, False{}) : Http.Frame}
+
+law loop_cl_done_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT", False{}, False{}) : Http.Frame}
+
+law loop_open_more_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\n\r\nabc"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\n\r\nabc", False{}, False{}) : Http.Frame}
+
+law loop_open_close_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\n\r\nabc"], True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\n\r\nabc", True{}, False{}) : Http.Frame}
+
+law loop_open_close_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\n\r\nabc"), True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\n\r\nabc", True{}, False{}) : Http.Frame}
+
+law loop_chunked_more_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", False{}, False{}) : Http.Frame}
+
+law loop_chunked_more_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", False{}, False{}) : Http.Frame}
+
+law loop_chunked_done_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nT: 1\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nT: 1\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_chunked_done_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nT: 1\r\n\r\n"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\nT: 1\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_head_request_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"], False{}, True{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", False{}, True{}) : Http.Frame}
+
+law loop_head_request_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n"), False{}, True{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n", False{}, True{}) : Http.Frame}
+
+law loop_304_whole:
+  {Http.res.frame(["HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_bad_status_whole:
+  {Http.res.frame(["HTTP/1.1 abc OK\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 abc OK\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_chunk_bad_size_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nG\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nG\r\n", False{}, False{}) : Http.Frame}
+
+law loop_chunk_bad_data_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nokXX"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nokXX", False{}, False{}) : Http.Frame}
+
+law loop_chunk_bad_data_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nokXX"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nokXX", False{}, False{}) : Http.Frame}
+
+law loop_chunk_cut_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n"], True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n", True{}, False{}) : Http.Frame}
+
+law loop_chunk_cut_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n"), True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n", True{}, False{}) : Http.Frame}
+
+law loop_cl_and_te_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\nZ"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\nZ", False{}, False{}) : Http.Frame}
+
+law loop_bad_length_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nContent-Length: 5abc\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5abc\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_te_gzip_close_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc"], True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{}) : Http.Frame}
+
+law loop_te_gzip_close_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc"), True{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{}) : Http.Frame}
+
+law loop_100_then_ok_whole:
+  {Http.res.frame(["HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"], False{}, False{}) == Http.frame("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{}) : Http.Frame}
+
+law loop_100_then_ok_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok"), False{}, False{}) == Http.frame("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{}) : Http.Frame}
+
+law loop_100_cut_whole:
+  {Http.res.frame(["HTTP/1.1 100 Continue\r\n\r\n"], True{}, False{}) == Http.frame("HTTP/1.1 100 Continue\r\n\r\n", True{}, False{}) : Http.Frame}
+
+law loop_101_final_whole:
+  {Http.res.frame(["HTTP/1.1 101 Switching Protocols\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 101 Switching Protocols\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_interim_cap_whole:
+  {Http.res.frame([hints(9n)], False{}, False{}) == Http.frame(hints(9n), False{}, False{}) : Http.Frame}
+
+law loop_interim_eight_whole:
+  {Http.res.frame([{hints(8n) ++ "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nZ" : String}], False{}, False{}) == Http.frame({hints(8n) ++ "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nZ" : String}, False{}, False{}) : Http.Frame}
+
+law loop_cookies_whole:
+  {Http.res.frame(["HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n"], False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n", False{}, False{}) : Http.Frame}
+
+law loop_cookies_bytes:
+  {Http.res.frame(bytewise("HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n"), False{}, False{}) == Http.frame("HTTP/1.1 200 OK\r\nSet-Cookie: a=1\r\nSet-Cookie: b=2\r\nContent-Length: 0\r\n\r\n", False{}, False{}) : Http.Frame}
+
+# RFC 9112 §6.3 (8): a body that ends at close leaves nothing to reuse the connection for.
+law loop_close_rest:
+  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\n\r\nabc"], True{}, False{}, Http.RtMore{Http.rv.start()})) == None{} : Maybe<&2, String>}
+
+# A self-delimited body leaves the bytes that came with its end, and no later read is taken.
+law loop_cl_rest:
+  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\no", "kNE", "XT"], False{}, False{}, Http.RtMore{Http.rv.start()})) == Some{"NE"} : Maybe<&2, String>}
+
+# RFC 9112 §6.3: how a streamed body ends.
+law stream_cl:
+  {Http.rb.of(Http.set(Http.empty(), "content-length", "5"), False{}) == Some{Http.RbLen{5}} : Maybe<&2, Http.Rb>}
+
+law stream_chunked:
+  {Http.rb.of(Http.set(Http.empty(), "transfer-encoding", "chunked"), False{}) == Some{Http.RbChunk{Http.dc.start()}} : Maybe<&2, Http.Rb>}
+
+law stream_cl_te:
+  {Http.rb.of(Http.set(Http.set(Http.empty(), "content-length", "5"), "transfer-encoding", "chunked"), False{}) == None{} : Maybe<&2, Http.Rb>}
+
+law stream_close:
+  {Http.rb.of(Http.empty(), False{}) == Some{Http.RbClose{}} : Maybe<&2, Http.Rb>}
+
+law stream_nobody:
+  {Http.rb.of(Http.set(Http.empty(), "content-length", "5"), True{}) == Some{Http.RbDone{}} : Maybe<&2, Http.Rb>}
+
+# A Content-Length body stops at its length; bytes past it are not body.
+law stream_len_split:
+  {Http.pc.of(Http.RbLen{3}, Bytes.from_string("abcdef")) == Http.Pc{Http.RbDone{}, Http.PoPiece{"abc"}} : Http.Pc}
+
+# A short read is a piece, and the rest is still owed.
+law stream_len_more:
+  {Http.pc.of(Http.RbLen{5}, Bytes.from_string("ab")) == Http.Pc{Http.RbLen{3}, Http.PoPiece{"ab"}} : Http.Pc}
+
+# A chunk split across reads gives the bytes that have arrived.
+law stream_chunk_piece:
+  {Http.pc.of(Http.RbChunk{Http.dc.start()}, Bytes.from_string("5\r\nhel")) == Http.Pc{Http.RbChunk{Http.DcData{2}}, Http.PoPiece{"hel"}} : Http.Pc}
+
+# The last chunk ends the stream even when no data came with it.
+law stream_chunk_end:
+  {Http.pc.of(Http.RbChunk{Http.dc.start()}, Bytes.from_string("0\r\n\r\n")) == Http.Pc{Http.RbDone{}, Http.PoEnd{}} : Http.Pc}
+
+# RFC 9112 §8: a close before Content-Length is met is an error.
+law stream_len_cut:
+  {Http.pc.eof(Http.RbLen{3}) == Http.Pc{Http.RbDone{}, Http.PoBad{Http.ErrBad{}}} : Http.Pc}
