@@ -122,15 +122,28 @@ def drop_cr.if(+s: String, cr: Bool) -> String:
 def drop_cr(+s: String) -> String:
   drop_cr.if(s, String.ends_with(s, "\r"))
 
-def take_sp.go(s: String, +acc: String) -> String & String:
+# Bool.pick evaluates both arms; a split that recursed inside it would reverse acc at every byte.
+def take.cut(acc: String, rest: String) -> String & String:
+  (String.reverse(String.drop(acc, 1n)), rest)
+
+# hit: the last char pushed onto acc was the stop char.
+def take_sp.go(s: String, acc: String, hit: Bool) -> String & String:
   match s:
     case SNil{}:
-      (String.reverse(acc), SNil{})
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, U32.is_eq(c, 32), (String.reverse(acc), t), take_sp.go(t, SCon{Chr{c}, acc}))
+      match hit:
+        case True{}:
+          take.cut(acc, SNil{})
+        case False{}:
+          (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, t}:
+      match hit:
+        case True{}:
+          take.cut(acc, SCon{Chr{c}, t})
+        case False{}:
+          take_sp.go(t, SCon{Chr{c}, acc}, U32.is_eq(c, 32))
 
 def take_sp(s: String) -> String & String:
-  take_sp.go(s, SNil{})
+  take_sp.go(s, SNil{}, False{})
 
 def start_line.ver(m: String, pv: String & String) -> String & String & String:
   (p, v) = pv
@@ -158,15 +171,23 @@ def split_at_blank.go(s: String, e: Bool, w: U32, acc: String) -> String & Strin
 def split_at_blank(s: String) -> String & String:
   split_at_blank.go(s, False{}, 0, SNil{})
 
-def split_colon.go(s: String, +acc: String) -> String & String:
+def split_colon.go(s: String, acc: String, hit: Bool) -> String & String:
   match s:
     case SNil{}:
-      (String.reverse(acc), SNil{})
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, U32.is_eq(c, 58), (String.reverse(acc), t), split_colon.go(t, SCon{Chr{c}, acc}))
+      match hit:
+        case True{}:
+          take.cut(acc, SNil{})
+        case False{}:
+          (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, t}:
+      match hit:
+        case True{}:
+          take.cut(acc, SCon{Chr{c}, t})
+        case False{}:
+          split_colon.go(t, SCon{Chr{c}, acc}, U32.is_eq(c, 58))
 
 def split_colon(s: String) -> String & String:
-  split_colon.go(s, SNil{})
+  split_colon.go(s, SNil{}, False{})
 
 def has_header.of(r: Map<&2, List<&2, String>> & Bool) -> Bool:
   (h, b) = r
@@ -1810,7 +1831,7 @@ def serve.cl_big(+max: Nat, need: Need) -> Bool:
     case NeedNow{}:
       False{}
 
-# RFC 6585 §5: a head with no blank line after 64 KiB is refused, so a slow head cannot cost O(n²).
+# RFC 6585 §5: a head over 64 KiB is refused; an open one is refused before it can cost O(n²).
 def serve.head_big(+n: Nat, need: Need) -> Bool:
   match need:
     case NeedHead{}:
@@ -1897,6 +1918,17 @@ def talk.step(rq: Rq, +got: String, +closed: Bool) -> Rq:
 def talk.rq(+raw: String) -> Rq:
   talk.step(talk.rq0(), raw, False{})
 
+def serve.head_long(hb: String & String) -> Bool:
+  (+hd, rest) = hb
+  Nat.is_lt(65536n, String.length(hd))
+
+def talk.turn.req(req: Req, +raw: String, long: Bool) -> Turn:
+  match long:
+    case True{}:
+      TurnFail{431}
+    case False{}:
+      TurnReq{req, req.after(raw), req.v11(raw)}
+
 def talk.turn.got(+rbuf: String, n: Nat, need: Need, g: Got, dc: Dco) -> Turn:
   match g:
     case GotBad{}:
@@ -1905,7 +1937,7 @@ def talk.turn.got(+rbuf: String, n: Nat, need: Need, g: Got, dc: Dco) -> Turn:
       TurnMore{Rq{rbuf, n, need, g, dc}}
     case GotReq{req}:
       +raw = String.reverse(rbuf)
-      TurnReq{req, req.after(raw), req.v11(raw)}
+      talk.turn.req(req, raw, serve.head_long(split_at_blank(raw)))
 
 def talk.turn.head(big: Bool, rbuf: String, n: Nat, need: Need, g: Got, dc: Dco) -> Turn:
   match big:
