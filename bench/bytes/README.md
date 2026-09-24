@@ -56,6 +56,20 @@ M4 Pro, macOS, Bend 2.0.25, 2026-09-24. Times are in ms; `Nx` is the multiple of
 - `find` is the weak spot. Go and JS hand it to SIMD `memchr`/`memmem`, and a Bend loop cannot call host code outside `IO`. Closing that gap probably needs native `Array` primitives in Bend itself. The C and Python columns are slow here for a different reason: macOS `memmem` and CPython's search do not use SIMD for this pattern.
 - `concat` keeps the chunks in a list and copies them once at the end. `Array.join` might make that O(1) per chunk; it has not been tried.
 
+## Later: parallel ops
+
+For now we accept the gap: `find` is about 20x slower, and `concat` about 4x. Every Bend op here is one sequential loop.
+
+The idea to try later: other standard libraries close gaps like these with SIMD, and Bend can close them with fork-join instead. `Array` is a binary tree (`ALeaf{value}` / `ANode{xs, ys}`), so an op can match `ANode{xs, ys}` and run `a b = op(xs) op(ys)` on all cores. Compare against each language's standard library as it is. If Bend's parallelism beats their SIMD, that counts.
+
+Plan:
+
+1. Run every op at several sizes, say 256 B, 4 KiB, 64 KiB, 1 MiB, and 256 MiB. HTTP headers are small, and on small buffers forking costs more than it saves.
+2. Go parallel automatically once a buffer passes a size cutoff. Take the cutoff from those size curves, and stay sequential below it.
+3. Parallelize `fill`, `sum`, `find`, and `equal`. `find` has to catch a match that spans the split: each half reports its first and last 3 bytes, or the halves overlap by 3 bytes. Try `Array.join` for `concat`.
+
+Keep in mind that parallelism borrows idle cores, while SIMD speeds up one core. On a loaded server every core is already busy, so the cutoff should be conservative.
+
 ## Caveats
 
 - Bend's `IO.now` counts in whole ms, so a Bend op under 20 ms is ±5% or worse. The other languages use sub-ms clocks.
