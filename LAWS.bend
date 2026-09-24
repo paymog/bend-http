@@ -495,3 +495,15 @@ law req_after_chunked:
 # A complete request is never skipped by the framing hint.
 law req_hint_complete:
   {Http.serve.try(True{}, Http.req.need("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), String.reverse("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), False{}) == Http.parse.got("GET / HTTP/1.1\r\nHost: x\r\n\r\n") : Http.Got}
+
+# A chunked body fed in two pieces decodes as if it came at once.
+law chunk_feed_split:
+  {Http.chunk.hold(Http.serve.dc.more("lo\r\n0\r\n\r\n", Http.dc.feed("5\r\nhel", Http.dc.start(), ""))) == Http.HoldBody{"hello"} : Http.Hold}
+
+# A split inside the size line or the final CRLF CRLF still decodes.
+law chunk_feed_split_size:
+  {Http.chunk.hold(Http.serve.dc.more("\r\nabc\r\n0\r\n\r", Http.dc.feed("3", Http.dc.start(), ""))) == Http.HoldMore{} : Http.Hold}
+
+# Bytes after the last chunk and trailer belong to the next request.
+law chunk_suffix_pipelined:
+  {Http.chunk.suffix("1\r\na\r\n0\r\nT: 1\r\n\r\nGET") == Some{"GET"} : Maybe<&2, String>}

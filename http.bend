@@ -260,18 +260,6 @@ def parse_u32(s: String) -> Maybe<&2, U32>:
     case SCon{Chr{+c}, t}:
       parse_u32.go(t, parse_u32.add(0, c), Bool.not(parse_u32.digit(c)))
 
-# A size line: still open, never a size, or a size plus the bytes after it.
-type Fit is Data:
-  FitMore{}
-  FitBad{}
-  FitSize{n: U32, rest: String}
-
-type Step is Data:
-  StepMore{}
-  StepBad{}
-  StepDone{body: String, rest: String}
-  StepNext{rest: String, acc: String}
-
 # More: a valid prefix. Bad: cannot become a body. Body: a whole chunked body.
 type Hold is Data:
   HoldMore{}
@@ -285,265 +273,201 @@ def is_hex(+c: U32) -> Bool:
 def hexv(+c: U32) -> U32:
   Bool.pick(U32, parse_u32.digit(c), (c - 48 : U32), Bool.pick(U32, U32.is_le(c, 70), (c - 55 : U32), (c - 87 : U32)))
 
-def chunk.lf1(r: String, n: U32, lf: Bool) -> Fit:
-  match lf:
-    case True{}:
-      FitSize{n, r}
-    case False{}:
-      FitBad{}
+# A chunked body decoder that reads each byte once, so a body fed in pieces
+# costs O(bytes) in total. Tr{j}: j bytes of the closing CRLF CRLF matched.
+type Dc is Data:
+  DcSize{acc: U32, seen: Bool}
+  DcExt{n: U32}
+  DcSizeLf{n: U32}
+  DcData{k: Nat}
+  DcDataCr{}
+  DcDataLf{}
+  DcTr{j: U32}
+  DcDone{}
+  DcBad{}
 
-def chunk.lf(t: String, n: U32) -> Fit:
-  match t:
-    case SNil{}:
-      FitMore{}
-    case SCon{Chr{c}, r}:
-      chunk.lf1(r, n, U32.is_eq(c, 10))
+# st: where the decoder is. racc: the body so far, reversed. rest: bytes after a Done body.
+type Dco is Data:
+  Dco{st: Dc, racc: String, rest: String}
 
-# Bool.pick evaluates both arms, so a loop that recursed inside it would scan
-# the whole body at every byte. These loops classify the next char into a
-# Bool param and recurse only in the arm that matches.
+def dc.start() -> Dc:
+  DcSize{0, False{}}
 
-# CR or ';' can still finish the size line. A bare LF or other byte cannot.
-def chunk.pending.semi(semi: Bool) -> Fit:
+def dc.size.semi(+n: U32, semi: Bool) -> Dc:
   match semi:
     case True{}:
-      FitMore{}
+      DcExt{n}
     case False{}:
-      FitBad{}
+      DcBad{}
 
-def chunk.pending(+c: U32, cr: Bool) -> Fit:
+def dc.size.cr(+n: U32, +c: U32, cr: Bool) -> Dc:
   match cr:
     case True{}:
-      FitMore{}
+      DcSizeLf{n}
     case False{}:
-      chunk.pending.semi(U32.is_eq(c, 59))
+      dc.size.semi(n, U32.is_eq(c, 59))
 
-def chunk.size.cut(+c: U32, digit: Bool) -> Fit:
-  match digit:
-    case True{}:
-      FitMore{}
-    case False{}:
-      chunk.pending(c, U32.is_eq(c, 13))
-
-def chunk.ext.cut(+c: U32, stop: Bool) -> Fit:
-  match stop:
-    case False{}:
-      FitMore{}
-    case True{}:
-      chunk.pending(c, U32.is_eq(c, 13))
-
-def chunk.ext.go(t: String, +c: U32, +n: U32, stop: Bool) -> Fit:
-  match t:
-    case SNil{}:
-      chunk.ext.cut(c, stop)
-    case SCon{Chr{+d}, u}:
-      match stop:
-        case True{}:
-          chunk.lf1(u, n, Bool.and(U32.is_eq(c, 13), U32.is_eq(d, 10)))
-        case False{}:
-          chunk.ext.go(u, d, n, Bool.or(U32.is_eq(d, 13), U32.is_eq(d, 10)))
-
-# RFC 9112 §7.1.1: recipients ignore unknown chunk extensions; a bare LF is not CRLF.
-def chunk.ext(s: String, n: U32) -> Fit:
-  match s:
-    case SNil{}:
-      FitMore{}
-    case SCon{Chr{+c}, t}:
-      chunk.ext.go(t, c, n, Bool.or(U32.is_eq(c, 13), U32.is_eq(c, 10)))
-
-def chunk.size.end.semi(+c: U32, t: String, +n: U32, semi: Bool) -> Fit:
-  match semi:
-    case True{}:
-      chunk.ext(t, n)
-    case False{}:
-      FitBad{}
-
-def chunk.size.end.cr(+c: U32, t: String, +n: U32, cr: Bool) -> Fit:
-  match cr:
-    case True{}:
-      chunk.lf(t, n)
-    case False{}:
-      chunk.size.end.semi(c, t, n, U32.is_eq(c, 59))
-
-def chunk.size.end(+c: U32, t: String, +n: U32, seen: Bool) -> Fit:
+def dc.size.end(+n: U32, +c: U32, seen: Bool) -> Dc:
   match seen:
     case False{}:
-      FitBad{}
+      DcBad{}
     case True{}:
-      chunk.size.end.cr(c, t, n, U32.is_eq(c, 13))
+      dc.size.cr(n, c, U32.is_eq(c, 13))
 
 # A size that would overflow 32 bits ends the digits, and size.end then refuses it.
-def chunk.digit(+c: U32, +acc: U32) -> Bool:
-  Bool.and(is_hex(c), U32.is_le(acc, 268435455))
-
-def chunk.size.go(t: String, +c: U32, +acc: U32, seen: Bool, digit: Bool) -> Fit:
-  match t:
-    case SNil{}:
-      chunk.size.cut(c, digit)
-    case SCon{Chr{+d}, u}:
-      match digit:
-        case False{}:
-          chunk.size.end(c, SCon{Chr{d}, u}, acc, seen)
-        case True{}:
-          +acc2 = (acc * 16 + hexv(c) : U32)
-          chunk.size.go(u, d, acc2, True{}, chunk.digit(d, acc2))
-
-def chunk.size(s: String) -> Fit:
-  match s:
-    case SNil{}:
-      FitMore{}
-    case SCon{Chr{+c}, t}:
-      chunk.size.go(t, c, 0, False{}, chunk.digit(c, 0))
-
-# The body is built reversed (racc) and turned around once at the end.
-
-def chunk.trailer.ok(racc: String, rest: String, ok: Bool) -> Step:
-  match ok:
+def dc.size(+acc: U32, seen: Bool, +c: U32, digit: Bool) -> Dc:
+  match digit:
     case True{}:
-      StepDone{String.reverse(racc), rest}
+      DcSize{(acc * 16 + hexv(c) : U32), True{}}
     case False{}:
-      StepMore{}
+      dc.size.end(acc, c, seen)
 
-def chunk.trailer.end(hb: String & String, racc: String) -> Step:
-  (+h, r) = hb
-  chunk.trailer.ok(racc, r, String.ends_with(h, "\r\n\r\n"))
-
-def chunk.trailer.if(+rest: String, racc: String, blank: Bool) -> Step:
-  match blank:
+# RFC 9112 §7.1.1: recipients ignore unknown chunk extensions; a bare LF is not CRLF.
+def dc.ext.lf(+n: U32, lf: Bool) -> Dc:
+  match lf:
     case True{}:
-      StepDone{String.reverse(racc), String.drop(rest, 2n)}
+      DcBad{}
     case False{}:
-      chunk.trailer.end(split_at_blank(rest), racc)
+      DcExt{n}
 
-# ponytail: trailer fields are dropped unparsed (§7.1.2 allows discarding)
-def chunk.trailer(+rest: String, racc: String) -> Step:
-  chunk.trailer.if(rest, racc, String.starts_with(rest, "\r\n"))
-
-type Took is Data:
-  Took{racc: String, rest: String}
-
-# Moves exactly k chars onto racc; None if s runs out first. O(k), no length scan.
-def take.exact(s: String, k: Nat, racc: String) -> Maybe<&2, Took>:
-  match s:
-    case SNil{}:
-      match k:
-        case 0n:
-          Some{Took{racc, SNil{}}}
-        case 1n+j:
-          None{}
-    case SCon{c, t}:
-      match k:
-        case 0n:
-          Some{Took{racc, SCon{c, t}}}
-        case 1n+j:
-          take.exact(t, j, SCon{c, racc})
-
-def chunk.crlf.lf(t: String) -> Step:
-  match t:
-    case SNil{}:
-      StepMore{}
-    case SCon{c, u}:
-      StepBad{}
-
-def chunk.crlf.cr(t: String, cr: Bool) -> Step:
+def dc.ext(+n: U32, +c: U32, cr: Bool) -> Dc:
   match cr:
-    case False{}:
-      StepBad{}
     case True{}:
-      chunk.crlf.lf(t)
-
-def chunk.crlf.rest(after: String) -> Step:
-  match after:
-    case SNil{}:
-      StepMore{}
-    case SCon{Chr{+c}, t}:
-      chunk.crlf.cr(t, U32.is_eq(c, 13))
-
-def chunk.crlf.if(racc: String, +after: String, ok: Bool) -> Step:
-  match ok:
-    case True{}:
-      StepNext{String.drop(after, 2n), racc}
+      DcSizeLf{n}
     case False{}:
-      chunk.crlf.rest(after)
+      dc.ext.lf(n, U32.is_eq(c, 10))
 
-def chunk.data(m: Maybe<&2, Took>) -> Step:
-  match m:
-    case None{}:
-      StepMore{}
-    case Some{Took{racc, +after}}:
-      chunk.crlf.if(racc, after, String.starts_with(after, "\r\n"))
-
-def chunk.step.n(+n: U32, rest: String, racc: String, zero: Bool) -> Step:
+def dc.sized(+n: U32, zero: Bool) -> Dc:
   match zero:
     case True{}:
-      chunk.trailer(rest, racc)
+      DcTr{2}
     case False{}:
-      chunk.data(take.exact(rest, U32.to_nat(n), racc))
+      DcData{U32.to_nat(n)}
 
-def chunk.step.got(got: Fit, racc: String) -> Step:
-  match got:
-    case FitMore{}:
-      StepMore{}
-    case FitBad{}:
-      StepBad{}
-    case FitSize{+n, rest}:
-      chunk.step.n(n, rest, racc, U32.is_eq(n, 0))
+def dc.size.lf(+n: U32, lf: Bool) -> Dc:
+  match lf:
+    case True{}:
+      dc.sized(n, U32.is_eq(n, 0))
+    case False{}:
+      DcBad{}
 
-def chunk.step(s: String, racc: String) -> Step:
-  chunk.step.got(chunk.size(s), racc)
-
-def chunk.live.go(fuel: Nat, st: Step) -> Hold:
-  match fuel:
+def dc.data(k: Nat) -> Dc:
+  match k:
     case 0n:
-      match st:
-        case StepMore{}:
-          HoldMore{}
-        case StepBad{}:
-          HoldBad{}
-        case StepDone{b, r}:
-          HoldBody{b}
-        case StepNext{r, a}:
-          HoldBad{}
-    case 1n+f:
-      match st:
-        case StepMore{}:
-          HoldMore{}
-        case StepBad{}:
-          HoldBad{}
-        case StepDone{b, r}:
-          HoldBody{b}
-        case StepNext{r, a}:
-          chunk.live.go(f, chunk.step(r, a))
+      DcDataCr{}
+    case 1n+p:
+      match p:
+        case 0n:
+          DcDataCr{}
+        case 1n+q:
+          DcData{1n+q}
 
-# Every chunk eats at least 3 bytes, so length(s) steps always suffice.
-def chunk.live(+s: String) -> Hold:
-  chunk.live.go(String.length(s), chunk.step(s, ""))
+def dc.pick(ok: Bool, next: Dc) -> Dc:
+  match ok:
+    case True{}:
+      next
+    case False{}:
+      DcBad{}
 
-def chunk.suffix.go(fuel: Nat, st: Step) -> Maybe<&2, String>:
-  match fuel:
-    case 0n:
-      match st:
-        case StepMore{}:
-          None{}
-        case StepBad{}:
-          None{}
-        case StepDone{b, r}:
-          Some{r}
-        case StepNext{x, a}:
-          None{}
-    case 1n+f:
-      match st:
-        case StepMore{}:
-          None{}
-        case StepBad{}:
-          None{}
-        case StepDone{b, r}:
-          Some{r}
-        case StepNext{x, a}:
-          chunk.suffix.go(f, chunk.step(x, a))
+# ponytail: trailer fields are dropped unparsed (§7.1.2 allows discarding)
+def dc.tr.hit(+j: U32) -> Dc:
+  Bool.pick(Dc, U32.is_eq(j, 3), DcDone{}, DcTr{(j + 1 : U32)})
 
-def chunk.suffix(+s: String) -> Maybe<&2, String>:
-  chunk.suffix.go(String.length(s), chunk.step(s, ""))
+def dc.tr(+j: U32, +c: U32, hit: Bool) -> Dc:
+  match hit:
+    case True{}:
+      dc.tr.hit(j)
+    case False{}:
+      Bool.pick(Dc, U32.is_eq(c, 13), DcTr{1}, DcTr{0})
+
+def dc.tr.want(+j: U32) -> U32:
+  Bool.pick(U32, U32.is_eq(U32.mod(j, 2), 0), 13, 10)
+
+def dc.byte(h: Char) -> U32:
+  Chr{c} = h
+  c
+
+# Done and Bad never look at the next byte, and data bytes are never inspected.
+def dc.feed(s: String, st: Dc, racc: String) -> Dco:
+  match s:
+    case SNil{}:
+      Dco{st, racc, ""}
+    case SCon{h, t}:
+      match st:
+        case DcBad{}:
+          Dco{DcBad{}, racc, ""}
+        case DcSize{+acc, seen}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.size(acc, seen, c, Bool.and(is_hex(c), U32.is_le(acc, 268435455))), racc)
+        case DcExt{+n}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.ext(n, c, U32.is_eq(c, 13)), racc)
+        case DcSizeLf{+n}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.size.lf(n, U32.is_eq(c, 10)), racc)
+        case DcDataCr{}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.pick(U32.is_eq(c, 13), DcDataLf{}), racc)
+        case DcDataLf{}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.pick(U32.is_eq(c, 10), dc.start()), racc)
+        case DcTr{+j}:
+          +c = dc.byte(h)
+          dc.feed(t, dc.tr(j, c, U32.is_eq(c, dc.tr.want(j))), racc)
+        case DcData{k}:
+          dc.feed(t, dc.data(k), SCon{h, racc})
+        case DcDone{}:
+          Dco{DcDone{}, racc, SCon{h, t}}
+
+def chunk.hold(o: Dco) -> Hold:
+  Dco{st, racc, rest} = o
+  match st:
+    case DcDone{}:
+      HoldBody{String.reverse(racc)}
+    case DcBad{}:
+      HoldBad{}
+    case DcSize{a, b}:
+      HoldMore{}
+    case DcExt{n}:
+      HoldMore{}
+    case DcSizeLf{n}:
+      HoldMore{}
+    case DcData{k}:
+      HoldMore{}
+    case DcDataCr{}:
+      HoldMore{}
+    case DcDataLf{}:
+      HoldMore{}
+    case DcTr{j}:
+      HoldMore{}
+
+def chunk.live(s: String) -> Hold:
+  chunk.hold(dc.feed(s, dc.start(), ""))
+
+def chunk.rest(o: Dco) -> Maybe<&2, String>:
+  Dco{st, racc, rest} = o
+  match st:
+    case DcDone{}:
+      Some{rest}
+    case DcBad{}:
+      None{}
+    case DcSize{a, b}:
+      None{}
+    case DcExt{n}:
+      None{}
+    case DcSizeLf{n}:
+      None{}
+    case DcData{k}:
+      None{}
+    case DcDataCr{}:
+      None{}
+    case DcDataLf{}:
+      None{}
+    case DcTr{j}:
+      None{}
+
+def chunk.suffix(s: String) -> Maybe<&2, String>:
+  chunk.rest(dc.feed(s, dc.start(), ""))
 
 def chunk.decode.hold(h: Hold) -> Maybe<&2, String>:
   match h:
@@ -556,7 +480,7 @@ def chunk.decode.hold(h: Hold) -> Maybe<&2, String>:
     case HoldBody{b}:
       Some{b}
 
-def chunk.decode(+s: String) -> Maybe<&2, String>:
+def chunk.decode(s: String) -> Maybe<&2, String>:
   chunk.decode.hold(chunk.live(s))
 
 def parse.res.cl.have(+rest: String, +k: Nat, short: Bool) -> Hold:
@@ -1159,7 +1083,7 @@ def res.conn_close(+headers: Map<&2, List<&2, String>>) -> Bool:
   String.eq(String.to_lower(header(headers, "connection")), "close")
 
 def serve.fail_close(+status: U32) -> Bool:
-  Bool.or(U32.is_eq(status, 400), U32.is_eq(status, 413))
+  Bool.or(U32.is_eq(status, 400), Bool.or(U32.is_eq(status, 413), U32.is_eq(status, 431)))
 
 def serve.keep.ok(fail: Bool, res_close: Bool) -> Bool:
   match fail:
@@ -1804,21 +1728,15 @@ def reply.sent.close(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit)
   (s, r) = m
   Socket.close(s)
 
-def reply_handle(~h: Req -> IO(Res), s: Socket, req: Req) -> IO(Unit):
-  Req{+method, path, headers, body} = req
-  do IO<Unit>:
-    res : Res <- h(Req{method, path, headers, body})
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, reply.bytes(res, String.eq(method, "HEAD"), True{}))
-    reply.sent.close(sent)
-
 def reply_fail(s: Socket, +status: U32) -> IO(Unit):
   do IO<Unit>:
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode(reply.fail.bytes(status)))
     reply.sent.close(sent)
 
 
+# dc decodes a chunked body as it arrives, so the whole buffer is framed once.
 type Rq is Data:
-  Rq{rbuf: String, n: Nat, need: Need, g: Got}
+  Rq{rbuf: String, n: Nat, need: Need, g: Got, dc: Dco}
 
 type Turn is Data:
   TurnClose{}
@@ -1892,45 +1810,123 @@ def serve.cl_big(+max: Nat, need: Need) -> Bool:
     case NeedNow{}:
       False{}
 
+# RFC 6585 §5: a head with no blank line after 64 KiB is refused, so a slow head cannot cost O(n²).
+def serve.head_big(+n: Nat, need: Need) -> Bool:
+  match need:
+    case NeedHead{}:
+      Nat.is_lt(65536n, n)
+    case NeedLen{t}:
+      False{}
+    case NeedChunk{}:
+      False{}
+    case NeedClose{}:
+      False{}
+    case NeedNow{}:
+      False{}
+
 def serve.too_big(+max: Nat, n: Nat, need: Need) -> Bool:
   Bool.or(serve.big(max, n), serve.cl_big(max, need))
 
-def talk.rq0() -> Rq:
-  Rq{"", 0n, NeedHead{}, GotMore{}}
+def dc.none() -> Dco:
+  Dco{dc.start(), "", ""}
 
-def talk.rq(+raw: String) -> Rq:
-  Rq{String.reverse(raw), String.length(raw), req.need(raw), parse.got(raw)}
+def talk.rq0() -> Rq:
+  Rq{"", 0n, NeedHead{}, GotMore{}, dc.none()}
+
+def serve.body.of(hb: String & String) -> String:
+  (hd, rest) = hb
+  rest
+
+# The head just came in: decode the body bytes that came with it. Later reads feed only their own bytes.
+def serve.dc.more(got: String, o: Dco) -> Dco:
+  Dco{st, racc, rest} = o
+  dc.feed(got, st, racc)
+
+# The head just came in: decode the body bytes that came with it. Later reads feed only their own bytes.
+def serve.dc(old: Need, +rbuf: String, got: String, o: Dco) -> Dco:
+  match old:
+    case NeedHead{}:
+      dc.feed(serve.body.of(split_at_blank(String.reverse(rbuf))), dc.start(), "")
+    case NeedLen{t}:
+      serve.dc.more(got, o)
+    case NeedChunk{}:
+      serve.dc.more(got, o)
+    case NeedClose{}:
+      serve.dc.more(got, o)
+    case NeedNow{}:
+      serve.dc.more(got, o)
+
+def serve.dc.got(o: Dco, +rbuf: String, closed: Bool) -> Got:
+  Dco{st, racc, rest} = o
+  match st:
+    case DcDone{}:
+      parse.got(String.reverse(rbuf))
+    case DcBad{}:
+      GotBad{}
+    case DcSize{a, b}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcExt{x}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcSizeLf{x}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcData{k}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcDataCr{}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcDataLf{}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+    case DcTr{j}:
+      Bool.pick(Got, closed, GotBad{}, GotMore{})
+
+def talk.step.pick(chunked: Bool, +rbuf2: String, +n2: Nat, +need: Need, +need2: Need, +got: String, +closed: Bool, dc: Dco) -> Rq:
+  match chunked:
+    case True{}:
+      +dc2 = serve.dc(need, rbuf2, got, dc)
+      Rq{rbuf2, n2, need2, serve.dc.got(dc2, rbuf2, closed), dc2}
+    case False{}:
+      Rq{rbuf2, n2, need2, serve.try(serve.gate(closed, need2, n2, got), need2, rbuf2, closed), dc}
 
 def talk.step(rq: Rq, +got: String, +closed: Bool) -> Rq:
-  Rq{rbuf, n, need, g} = rq
+  Rq{rbuf, n, +need, g, dc} = rq
   +rbuf2 = {String.reverse(got) ++ rbuf : String}
   +n2 = Nat.add(n, String.length(got))
   +need2 = serve.need(need, rbuf2)
-  Rq{rbuf2, n2, need2, serve.try(serve.gate(closed, need2, n2, got), need2, rbuf2, closed)}
+  talk.step.pick(fetch.chunked(need2), rbuf2, n2, need, need2, got, closed, dc)
 
-def talk.turn.got(+rbuf: String, n: Nat, need: Need, g: Got) -> Turn:
+# Pipelined bytes left over from the last request.
+def talk.rq(+raw: String) -> Rq:
+  talk.step(talk.rq0(), raw, False{})
+
+def talk.turn.got(+rbuf: String, n: Nat, need: Need, g: Got, dc: Dco) -> Turn:
   match g:
     case GotBad{}:
       TurnFail{400}
     case GotMore{}:
-      TurnMore{Rq{rbuf, n, need, g}}
+      TurnMore{Rq{rbuf, n, need, g, dc}}
     case GotReq{req}:
       +raw = String.reverse(rbuf)
       TurnReq{req, req.after(raw), req.v11(raw)}
 
-def talk.turn.pick(big: Bool, rbuf: String, n: Nat, need: Need, g: Got) -> Turn:
+def talk.turn.head(big: Bool, rbuf: String, n: Nat, need: Need, g: Got, dc: Dco) -> Turn:
+  match big:
+    case True{}:
+      TurnFail{431}
+    case False{}:
+      talk.turn.got(rbuf, n, need, g, dc)
+
+def talk.turn.pick(big: Bool, rbuf: String, +n: Nat, +need: Need, g: Got, dc: Dco) -> Turn:
   match big:
     case True{}:
       TurnFail{413}
     case False{}:
-      talk.turn.got(rbuf, n, need, g)
+      talk.turn.head(serve.head_big(n, need), rbuf, n, need, g, dc)
 
-def talk.turn.check(+max: Nat, +n: Nat, +need: Need, rbuf: String, g: Got) -> Turn:
-  talk.turn.pick(serve.too_big(max, n, need), rbuf, n, need, g)
+def talk.turn.check(+max: Nat, +n: Nat, +need: Need, rbuf: String, g: Got, dc: Dco) -> Turn:
+  talk.turn.pick(serve.too_big(max, n, need), rbuf, n, need, g, dc)
 
 def talk.turn(max: Nat, rq: Rq) -> Turn:
-  Rq{rbuf, n, need, g} = rq
-  talk.turn.check(max, n, need, rbuf, g)
+  Rq{rbuf, n, need, g, dc} = rq
+  talk.turn.check(max, n, need, rbuf, g, dc)
 
 def serve.max() -> Nat:
   fetch.max()

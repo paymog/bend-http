@@ -93,7 +93,11 @@ def Laws.chunk_data_opaque(c):
   {==}
 
 def Laws.chunk_needs_size(b):
-  {==}
+  match b:
+    case SNil{}:
+      {==}
+    case SCon{h, t}:
+      {==}
 
 def Laws.chunk_hello():
   {==}
@@ -445,4 +449,13 @@ def Laws.req_hint_complete():
   {==}
 
 def Laws.req_need_content_length():
+  {==}
+
+def Laws.chunk_feed_split():
+  {==}
+
+def Laws.chunk_feed_split_size():
+  {==}
+
+def Laws.chunk_suffix_pipelined():
   {==}
