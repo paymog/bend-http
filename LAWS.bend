@@ -589,7 +589,7 @@ law stream_len_more:
 
 # A chunk split across reads gives the bytes that have arrived.
 law stream_chunk_piece:
-  {Http.pc.of(Http.SfChunk{Http.dc.start()}, "5\r\nhel") == Http.Pc{Http.SfChunk{Http.DcData{2n}}, Http.PoPiece{"hel"}} : Http.Pc}
+  {Http.pc.of(Http.SfChunk{Http.dc.start()}, "5\r\nhel") == Http.Pc{Http.SfChunk{Http.DcData{2}}, Http.PoPiece{"hel"}} : Http.Pc}
 
 # RFC 9112 §8: a close before Content-Length is met is an error.
 law stream_len_cut:

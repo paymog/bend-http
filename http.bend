@@ -301,7 +301,7 @@ type Dc is Data:
   DcSize{acc: U32, seen: Bool}
   DcExt{n: U32}
   DcSizeLf{n: U32}
-  DcData{k: Nat}
+  DcData{k: U32}
   DcDataCr{}
   DcDataLf{}
   DcTr{j: U32}
@@ -364,7 +364,7 @@ def dc.sized(+n: U32, zero: Bool) -> Dc:
     case True{}:
       DcTr{2}
     case False{}:
-      DcData{U32.to_nat(n)}
+      DcData{n}
 
 def dc.size.lf(+n: U32, lf: Bool) -> Dc:
   match lf:
@@ -373,16 +373,9 @@ def dc.size.lf(+n: U32, lf: Bool) -> Dc:
     case False{}:
       DcBad{}
 
-def dc.data(k: Nat) -> Dc:
-  match k:
-    case 0n:
-      DcDataCr{}
-    case 1n+p:
-      match p:
-        case 0n:
-          DcDataCr{}
-        case 1n+q:
-          DcData{1n+q}
+# k data bytes are left and m of them were just read.
+def dc.data(+k: U32, +m: U32) -> Dc:
+  Bool.pick(Dc, U32.is_le(k, m), DcDataCr{}, DcData{(k - m : U32)})
 
 def dc.pick(ok: Bool, next: Dc) -> Dc:
   match ok:
@@ -409,7 +402,49 @@ def dc.byte(h: Char) -> U32:
   Chr{c} = h
   c
 
-# Done and Bad never look at the next byte, and data bytes are never inspected.
+# One byte c. Done and Bad never look at it, and a data byte is not inspected.
+def dc.step(st: Dc, +c: U32) -> Dc:
+  match st:
+    case DcBad{}:
+      DcBad{}
+    case DcSize{+acc, seen}:
+      dc.size(acc, seen, c, Bool.and(is_hex(c), U32.is_le(acc, 268435455)))
+    case DcExt{+n}:
+      dc.ext(n, c, U32.is_eq(c, 13))
+    case DcSizeLf{+n}:
+      dc.size.lf(n, U32.is_eq(c, 10))
+    case DcDataCr{}:
+      dc.pick(U32.is_eq(c, 13), DcDataLf{})
+    case DcDataLf{}:
+      dc.pick(U32.is_eq(c, 10), dc.start())
+    case DcTr{+j}:
+      dc.tr(j, c, U32.is_eq(c, dc.tr.want(j)))
+    case DcData{+k}:
+      dc.data(k, 1)
+    case DcDone{}:
+      DcDone{}
+
+def dc.live(st: Dc) -> Bool:
+  match st:
+    case DcDone{}:
+      False{}
+    case DcBad{}:
+      False{}
+    case DcSize{a, b}:
+      True{}
+    case DcExt{n}:
+      True{}
+    case DcSizeLf{n}:
+      True{}
+    case DcData{k}:
+      True{}
+    case DcDataCr{}:
+      True{}
+    case DcDataLf{}:
+      True{}
+    case DcTr{j}:
+      True{}
+
 def dc.feed(s: String, st: Dc, racc: String) -> Dco:
   match s:
     case SNil{}:
@@ -418,28 +453,22 @@ def dc.feed(s: String, st: Dc, racc: String) -> Dco:
       match st:
         case DcBad{}:
           Dco{DcBad{}, racc, ""}
-        case DcSize{+acc, seen}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.size(acc, seen, c, Bool.and(is_hex(c), U32.is_le(acc, 268435455))), racc)
-        case DcExt{+n}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.ext(n, c, U32.is_eq(c, 13)), racc)
-        case DcSizeLf{+n}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.size.lf(n, U32.is_eq(c, 10)), racc)
-        case DcDataCr{}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.pick(U32.is_eq(c, 13), DcDataLf{}), racc)
-        case DcDataLf{}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.pick(U32.is_eq(c, 10), dc.start()), racc)
-        case DcTr{+j}:
-          +c = dc.byte(h)
-          dc.feed(t, dc.tr(j, c, U32.is_eq(c, dc.tr.want(j))), racc)
-        case DcData{k}:
-          dc.feed(t, dc.data(k), SCon{h, racc})
         case DcDone{}:
           Dco{DcDone{}, racc, SCon{h, t}}
+        case DcData{+k}:
+          dc.feed(t, dc.data(k, 1), SCon{h, racc})
+        case DcSize{+acc, seen}:
+          dc.feed(t, dc.step(DcSize{acc, seen}, dc.byte(h)), racc)
+        case DcExt{+n}:
+          dc.feed(t, dc.step(DcExt{n}, dc.byte(h)), racc)
+        case DcSizeLf{+n}:
+          dc.feed(t, dc.step(DcSizeLf{n}, dc.byte(h)), racc)
+        case DcDataCr{}:
+          dc.feed(t, dc.step(DcDataCr{}, dc.byte(h)), racc)
+        case DcDataLf{}:
+          dc.feed(t, dc.step(DcDataLf{}, dc.byte(h)), racc)
+        case DcTr{+j}:
+          dc.feed(t, dc.step(DcTr{j}, dc.byte(h)), racc)
 
 def chunk.hold(o: Dco) -> Hold:
   Dco{st, racc, rest} = o
