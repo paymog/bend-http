@@ -15,19 +15,11 @@ def path_ok(+c: U32) -> Bool:
 def hexn(+n: U32) -> U32:
   Bool.pick(U32, U32.is_le(n, 9), (48 + n : U32), (55 + n : U32))
 
-@unsafe
-def hexhi.go(+n: U32, +acc: U32, small: Bool) -> U32:
-  match small:
-    case True{}:
-      acc
-    case False{}:
-      hexhi.go((n - 16 : U32), (acc + 1 : U32), U32.is_le((n - 16 : U32), 15))
-
 def hexhi(+n: U32) -> U32:
-  hexhi.go(n, 0, U32.is_le(n, 15))
+  U32.div(n, 16)
 
 def hexlo(+n: U32) -> U32:
-  (n - (hexhi(n) * 16 : U32) : U32)
+  U32.mod(n, 16)
 
 def pct.enc.push(+c: U32, acc: String, keep: Bool) -> String:
   match keep:
@@ -80,62 +72,101 @@ def unhex.d(+c: U32, dec: Bool, lo: Bool) -> Maybe<&2, U32>:
 def unhex(+c: U32) -> Maybe<&2, U32>:
   unhex.d(c, Bool.and(U32.is_le(48, c), U32.is_le(c, 57)), Bool.and(U32.is_le(97, c), U32.is_le(c, 102)))
 
-def pct.cons(byte: U32, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match rest:
-    case None{}:
-      None{}
-    case Some{s}:
-      Some{SCon{Chr{byte}, s}}
+# Lit: plain bytes. Hi: after "%". Lo: after "%" and one hex digit. Bad: never decodes.
+type Pd is Data:
+  PdLit{}
+  PdHi{}
+  PdLo{hi: U32}
+  PdBad{}
 
-def pct.join2(x: U32, b: Maybe<&2, U32>, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match b:
-    case None{}:
-      None{}
-    case Some{y}:
-      pct.cons((x * 16 + y : U32), rest)
-
-def pct.join(a: Maybe<&2, U32>, b: Maybe<&2, U32>, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match a:
-    case None{}:
-      None{}
-    case Some{x}:
-      pct.join2(x, b, rest)
-
-def pct.decode.last(+c: U32, pct: Bool) -> Maybe<&2, String>:
+def pct.lit(+c: U32, racc: String, pct: Bool) -> Pd & String:
   match pct:
     case True{}:
-      None{}
+      (PdHi{}, racc)
     case False{}:
-      Some{SCon{Chr{c}, SNil{}}}
+      (PdLit{}, SCon{Chr{c}, racc})
 
-@unsafe
-def pct.decode.go(s: String) -> Maybe<&2, String>:
+def pct.hi(m: Maybe<&2, U32>, racc: String) -> Pd & String:
+  match m:
+    case None{}:
+      (PdBad{}, racc)
+    case Some{x}:
+      (PdLo{x}, racc)
+
+def pct.lo(+x: U32, m: Maybe<&2, U32>, racc: String) -> Pd & String:
+  match m:
+    case None{}:
+      (PdBad{}, racc)
+    case Some{y}:
+      (PdLit{}, SCon{Chr{(x * 16 + y : U32)}, racc})
+
+def pct.byte(h: Char) -> U32:
+  Chr{c} = h
+  c
+
+def pct.end(st: Pd, racc: String) -> Maybe<&2, String>:
+  match st:
+    case PdLit{}:
+      Some{String.reverse(racc)}
+    case PdHi{}:
+      None{}
+    case PdLo{x}:
+      None{}
+    case PdBad{}:
+      None{}
+
+def pct.step(st: Pd, +c: U32, racc: String) -> Pd & String:
+  match st:
+    case PdLit{}:
+      pct.lit(c, racc, U32.is_eq(c, 37))
+    case PdHi{}:
+      pct.hi(unhex(c), racc)
+    case PdLo{+x}:
+      pct.lo(x, unhex(c), racc)
+    case PdBad{}:
+      (PdBad{}, racc)
+
+def pct.end.of(sr: Pd & String) -> Maybe<&2, String>:
+  (st, racc) = sr
+  pct.end(st, racc)
+
+def pct.step.of(sr: Pd & String, +c: U32) -> Pd & String:
+  (st, racc) = sr
+  pct.step(st, c, racc)
+
+def pct.decode.go(s: String, sr: Pd & String) -> Maybe<&2, String>:
   match s:
     case SNil{}:
-      Some{SNil{}}
-    case SCon{Chr{+c}, t}:
-      match t:
-        case SNil{}:
-          pct.decode.last(c, U32.is_eq(c, 37))
-        case SCon{Chr{+a}, u}:
-          match u:
-            case SNil{}:
-              Bool.pick(Maybe<&2, String>, U32.is_eq(c, 37), None{}, pct.cons(c, pct.decode.go(SCon{Chr{a}, SNil{}})))
-            case SCon{Chr{+b}, +r}:
-              Bool.pick(Maybe<&2, String>, U32.is_eq(c, 37), pct.join(unhex(a), unhex(b), pct.decode.go(r)), pct.cons(c, pct.decode.go(SCon{Chr{a}, SCon{Chr{b}, r}})))
+      pct.end.of(sr)
+    case SCon{h, t}:
+      pct.decode.go(t, pct.step.of(sr, pct.byte(h)))
 
 def pct.decode(s: String) -> Maybe<&2, String>:
-  pct.decode.go(s)
-def take_to.go(s: String, +stop: U32, +acc: String) -> String & String:
+  pct.decode.go(s, (PdLit{}, ""))
+
+# Bool.pick evaluates both arms; a split that recursed inside it would reverse acc at every byte.
+def take.cut(acc: String, rest: String) -> String & String:
+  (String.reverse(String.drop(acc, 1n)), rest)
+
+# hit: the last char pushed onto acc was the stop char.
+def take_to.go(s: String, +stop: U32, acc: String, hit: Bool) -> String & String:
   match s:
     case SNil{}:
-      (String.reverse(acc), SNil{})
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, U32.is_eq(c, stop), (String.reverse(acc), t), take_to.go(t, stop, SCon{Chr{c}, acc}))
+      match hit:
+        case True{}:
+          take.cut(acc, SNil{})
+        case False{}:
+          (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, t}:
+      match hit:
+        case True{}:
+          take.cut(acc, SCon{Chr{c}, t})
+        case False{}:
+          take_to.go(t, stop, SCon{Chr{c}, acc}, U32.is_eq(c, stop))
 
 # (text before the first stop char, text after it)
 def take_to(s: String, stop: U32) -> String & String:
-  take_to.go(s, stop, SNil{})
+  take_to.go(s, stop, SNil{}, False{})
 
 def pair(kv: String) -> String & String:
   take_to(kv, 61)
@@ -251,13 +282,28 @@ def has(s: String, +c: U32) -> Bool:
 def auth_end(+c: U32) -> Bool:
   Bool.or(U32.is_eq(c, 47), Bool.or(U32.is_eq(c, 63), U32.is_eq(c, 35)))
 
+def take.back(acc: String, rest: String) -> String & String:
+  match acc:
+    case SNil{}:
+      (SNil{}, rest)
+    case SCon{x, a2}:
+      (String.reverse(a2), SCon{x, rest})
+
 # §3.2: the authority runs to the first "/", "?" or "#".
-def take_auth.go(s: String, +acc: String) -> String & String:
+def take_auth.go(s: String, acc: String, hit: Bool) -> String & String:
   match s:
     case SNil{}:
-      (String.reverse(acc), SNil{})
-    case SCon{Chr{+c}, +t}:
-      Bool.pick(String & String, auth_end(c), (String.reverse(acc), SCon{Chr{c}, t}), take_auth.go(t, SCon{Chr{c}, acc}))
+      match hit:
+        case True{}:
+          take.back(acc, SNil{})
+        case False{}:
+          (String.reverse(acc), SNil{})
+    case SCon{Chr{+c}, t}:
+      match hit:
+        case True{}:
+          take.back(acc, SCon{Chr{c}, t})
+        case False{}:
+          take_auth.go(t, SCon{Chr{c}, acc}, auth_end(c))
 
 def default_port(+scheme: String) -> Maybe<&2, U32>:
   Bool.pick(Maybe<&2, U32>, String.eq(scheme, "http"), Some{80}, Bool.pick(Maybe<&2, U32>, String.eq(scheme, "https"), Some{443}, None{}))
@@ -317,7 +363,7 @@ def abs.slashes(scheme: String, +rest: String, ok: Bool) -> Maybe<&2, Abs>:
     case False{}:
       None{}
     case True{}:
-      abs.auth(String.to_lower(scheme), take_auth.go(String.drop(rest, 2n), SNil{}))
+      abs.auth(String.to_lower(scheme), take_auth.go(String.drop(rest, 2n), SNil{}, False{}))
 
 def abs.scheme(sr: String & String) -> Maybe<&2, Abs>:
   (scheme, +rest) = sr
