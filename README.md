@@ -95,6 +95,12 @@ A response with `Transfer-Encoding` other than `chunked` is read until the conne
 
 The `zlib` package has `Zlib.inflate` (raw DEFLATE, RFC 1951), `Zlib.gunzip` (RFC 1952, one member, CRC-32 and size checked), `Zlib.unzlib` (RFC 1950, Adler-32 checked), `Zlib.crc32`, and `Zlib.adler32`. Each returns `None` for malformed or cut-short input. A 1 MB body decodes in about 0.1 s natively.
 
+## Streams
+
+`Http.open(method, url, headers, body)` follows redirects like `fetch` and returns a `Stream` as soon as the head is in. `Http.stream.res(st)` gives the status and headers (its body is `""`). `Http.stream.read(st)` returns the next piece of the body, or `None` at the end; a piece is never empty. `Http.stream.close(st)` closes the connection. Content-Length, chunked, and close-delimited bodies all stream, and interim 1xx responses are skipped. A stream sends no `Accept-Encoding` and returns the bytes as sent. Streaming a 50 MB body keeps the program under 10 MB.
+
+`Http.upload(method, url, headers)` sends the head with `Transfer-Encoding: chunked`. `Http.upload.write(up, piece)` sends one chunk; an empty piece sends nothing. `Http.upload.finish(up)` ends the body and returns the response as a `Stream`. A streamed request body cannot be replayed, so uploads do not follow redirects. `open.with` and `upload.with` take a step timeout.
+
 ## Pool
 
 ```bend

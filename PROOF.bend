@@ -492,3 +492,39 @@ def Laws.accept_enc_default():
 
 def Laws.accept_enc_caller():
   {==}
+
+def Laws.stream_cl():
+  {==}
+
+def Laws.stream_chunked():
+  {==}
+
+def Laws.stream_cl_te():
+  {==}
+
+def Laws.stream_close():
+  {==}
+
+def Laws.stream_nobody():
+  {==}
+
+def Laws.stream_len_split():
+  {==}
+
+def Laws.stream_len_more():
+  {==}
+
+def Laws.stream_chunk_piece():
+  {==}
+
+def Laws.stream_len_cut():
+  {==}
+
+def Laws.stream_interim():
+  {==}
+
+def Laws.hex_chunk_size():
+  {==}
+
+def Laws.hex_zero():
+  {==}

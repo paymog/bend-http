@@ -1974,6 +1974,448 @@ def fetch(method: String, url: String, headers: Map<&2, List<&2, String>>, body:
 def get(url: String) -> IO(Result<&2, &2, Err, Res>):
   fetch("GET", url, empty(), "")
 
+# Streaming (a body read or sent in pieces). Stream bodies are never content-decoded.
+# Len: bytes left. Chunk: the chunk decoder. Close: until the server closes. Done: nothing left.
+type Sf is Data:
+  SfLen{left: Nat}
+  SfChunk{st: Dc}
+  SfClose{}
+  SfDone{}
+
+# What the next read returns: read more, a piece, the end, or an error.
+type Po is Data:
+  PoNone{}
+  PoPiece{b: String}
+  PoEnd{}
+  PoBad{e: Err}
+
+type Stream is Type:
+  Stream{tls: Bool, s: Socket, ms: U32, res: Res, sf: Sf, out: Po}
+
+def sf.cl(n: Maybe<&2, U32>) -> Maybe<&2, Sf>:
+  match n:
+    case None{}:
+      None{}
+    case Some{+k}:
+      Some{Bool.pick(Sf, U32.is_zero(k), SfDone{}, SfLen{U32.to_nat(k)})}
+
+def sf.te(+h: Map<&2, List<&2, String>>, cl: Bool) -> Maybe<&2, Sf>:
+  match cl:
+    case True{}:
+      None{}
+    case False{}:
+      Some{Bool.pick(Sf, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"), SfChunk{dc.start()}, SfClose{})}
+
+def sf.len(+h: Map<&2, List<&2, String>>, te: Bool) -> Maybe<&2, Sf>:
+  match te:
+    case True{}:
+      sf.te(h, has_header(h, "content-length"))
+    case False{}:
+      Bool.pick(Maybe<&2, Sf>, has_header(h, "content-length"), sf.cl(parse_u32(header(h, "content-length"))), Some{SfClose{}})
+
+# RFC 9112 §6.3: how the body of this response ends. None: it cannot be framed.
+def sf.of(+status: U32, +h: Map<&2, List<&2, String>>, head: Bool, nobody: Bool) -> Maybe<&2, Sf>:
+  match nobody:
+    case True{}:
+      Some{SfDone{}}
+    case False{}:
+      sf.len(h, has_header(h, "transfer-encoding"))
+
+type Pc is Data:
+  Pc{sf: Sf, out: Po}
+
+def pc.piece(+sf: Sf, +b: String) -> Pc:
+  Pc{sf, Bool.pick(Po, String.is_empty(b), PoNone{}, PoPiece{b})}
+
+def pc.len(+left: Nat, +b: String, +n: Nat, all: Bool) -> Pc:
+  match all:
+    case True{}:
+      Pc{SfDone{}, PoPiece{String.take(b, left)}}
+    case False{}:
+      pc.piece(SfLen{Nat.sub(left, n)}, b)
+
+def pc.chunk(o: Dco) -> Pc:
+  Dco{st, racc, rest} = o
+  match st:
+    case DcDone{}:
+      Pc{SfDone{}, PoPiece{String.reverse(racc)}}
+    case DcBad{}:
+      Pc{SfDone{}, PoBad{ErrBad{}}}
+    case DcSize{a, b}:
+      pc.piece(SfChunk{DcSize{a, b}}, String.reverse(racc))
+    case DcExt{x}:
+      pc.piece(SfChunk{DcExt{x}}, String.reverse(racc))
+    case DcSizeLf{x}:
+      pc.piece(SfChunk{DcSizeLf{x}}, String.reverse(racc))
+    case DcData{k}:
+      pc.piece(SfChunk{DcData{k}}, String.reverse(racc))
+    case DcDataCr{}:
+      pc.piece(SfChunk{DcDataCr{}}, String.reverse(racc))
+    case DcDataLf{}:
+      pc.piece(SfChunk{DcDataLf{}}, String.reverse(racc))
+    case DcTr{j}:
+      pc.piece(SfChunk{DcTr{j}}, String.reverse(racc))
+
+# The body bytes b just arrived: what they add to the body, and how it ends.
+def pc.of(sf: Sf, +b: String) -> Pc:
+  match sf:
+    case SfLen{+left}:
+      +n = String.length(b)
+      pc.len(left, b, n, Nat.is_le(left, n))
+    case SfChunk{st}:
+      pc.chunk(dc.feed(b, st, ""))
+    case SfClose{}:
+      pc.piece(SfClose{}, b)
+    case SfDone{}:
+      Pc{SfDone{}, PoEnd{}}
+
+# The server closed. Only a close-delimited body may end this way (RFC 9112 §8).
+def pc.eof(sf: Sf) -> Pc:
+  match sf:
+    case SfClose{}:
+      Pc{SfDone{}, PoEnd{}}
+    case SfDone{}:
+      Pc{SfDone{}, PoEnd{}}
+    case SfLen{n}:
+      Pc{SfDone{}, PoBad{ErrBad{}}}
+    case SfChunk{st}:
+      Pc{SfDone{}, PoBad{ErrBad{}}}
+
+def stream.mk(+tls: Bool, s: Socket, +ms: U32, res: Res, pc: Pc) -> Stream:
+  Pc{sf, out} = pc
+  Stream{tls, s, ms, res, sf, out}
+
+def stream.got.eof(+tls: Bool, s: Socket, +ms: U32, res: Res, +sf: Sf, +b: String, eof: Bool) -> Stream:
+  match eof:
+    case True{}:
+      stream.mk(tls, s, ms, res, pc.eof(sf))
+    case False{}:
+      stream.mk(tls, s, ms, res, pc.of(sf, b))
+
+def stream.got(+tls: Bool, +ms: U32, res: Res, +sf: Sf, m: Socket & Result<&1, &1, U32 & String, String>) -> Stream:
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      Stream{tls, s, ms, res, SfDone{}, PoBad{err.or_late(code, ErrRead{code, why})}}
+    case Done{+b}:
+      stream.got.eof(tls, s, ms, res, sf, b, String.is_empty(b))
+
+def stream.after(+sf: Sf) -> Po:
+  match sf:
+    case SfDone{}:
+      PoEnd{}
+    case SfLen{n}:
+      PoNone{}
+    case SfChunk{st}:
+      PoNone{}
+    case SfClose{}:
+      PoNone{}
+
+# The next piece of the body; None at the end. A piece is never empty.
+@unsafe
+def stream.read(st: Stream) -> IO(Stream & Result<&2, &2, Err, Maybe<&2, String>>):
+  Stream{+tls, s, +ms, res, +sf, out} = st
+  match out:
+    case PoPiece{b}:
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, stream.after(sf)}, Done{Some{b}}))
+    case PoEnd{}:
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, PoEnd{}}, Done{None{}}))
+    case PoBad{+e}:
+      IO.pure(Stream & Result<&2, &2, Err, Maybe<&2, String>>, (Stream{tls, s, ms, res, sf, PoBad{e}}, Fail{e}))
+    case PoNone{}:
+      do IO<Stream & Result<&2, &2, Err, Maybe<&2, String>>>:
+        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
+        stream.read(stream.got(tls, ms, res, sf, m))
+
+# Status and headers. Its body is "": read the body with stream.read.
+def stream.res(st: Stream) -> Stream & Res:
+  Stream{tls, s, ms, +res, sf, out} = st
+  (Stream{tls, s, ms, res, sf, out}, res)
+
+def stream.close(st: Stream) -> IO(Unit):
+  Stream{tls, s, ms, res, sf, out} = st
+  io.close(tls, s)
+
+# ponytail: 8 interim responses, as frame allows
+def skip.interim(fuel: Nat, +raw: String) -> String:
+  match fuel:
+    case 0n:
+      raw
+    case 1n+f:
+      skip.interim(f, frame.at.cont(raw, frame.lead(split_at_blank(raw))))
+
+def body.start(+raw: String) -> String:
+  after.rest(split_at_blank(skip.interim(8n, raw)))
+
+def stream.framed(+tls: Bool, s: Socket, +ms: U32, +res: Res, +rest: String, m: Maybe<&2, Sf>) -> IO(Result<&1, &1, Err, Stream>):
+  match m:
+    case None{}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        io.close(tls, s)
+        return Fail{ErrBad{}}
+    case Some{sf}:
+      IO.pure(Result<&1, &1, Err, Stream>, Done{stream.mk(tls, s, ms, res, pc.of(sf, rest))})
+
+def stream.begin(+tls: Bool, s: Socket, +ms: U32, +head: Bool, +res: Res, +raw: String) -> IO(Result<&1, &1, Err, Stream>):
+  Res{+status, +headers, body} = res
+  stream.framed(tls, s, ms, res, body.start(raw), sf.of(status, headers, head, frame.nobody(status, head)))
+
+def fetch.fail.of(r: Result<&2, &2, Err, Res>) -> Result<&1, &1, Err, Stream>:
+  match r:
+    case Fail{e}:
+      Fail{e}
+    case Done{res}:
+      Fail{ErrBad{}}
+
+# Reads until the head is in. Framing it as a HEAD response stops at the blank line.
+@unsafe
+def stream.head(+tls: Bool, +ms: U32, +head: Bool, st: Socket & Rd) -> IO(Result<&1, &1, Err, Stream>):
+  (s, rd) = st
+  Rd{rbuf, n, need, f, err} = rd
+  match f:
+    case FrameMore{}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
+        stream.head(tls, ms, head, fetch.next(True{}, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
+    case FrameBad{}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        r : Result<&2, &2, Err, Res> <- fetch.bad(tls, s, err)
+        return fetch.fail.of(r)
+    case FrameDone{res}:
+      stream.begin(tls, s, ms, head, res, String.reverse(rbuf))
+
+
+def stream.sent(+tls: Bool, +ms: U32, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&1, &1, Err, Stream>):
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        io.close(tls, s)
+        return Fail{err.or_late(code, ErrWrite{code, why})}
+    case Done{u}:
+      stream.head(tls, ms, head, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
+
+def stream.conn(r: Result<&1, &1, Err, Conn>, +ms: U32, +head: Bool, wire: String) -> IO(Result<&1, &1, Err, Stream>):
+  match r:
+    case Fail{e}:
+      IO.pure(Result<&1, &1, Err, Stream>, Fail{e})
+    case Done{c}:
+      Conn{+tls, s} = c
+      do IO<Result<&1, &1, Err, Stream>>:
+        sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
+        stream.sent(tls, ms, head, sent)
+
+def stream.ip(+tls: Bool, +ms: U32, +head: Bool, +host: String, +port: U32, wire: String, ip: Maybe<&2, String>) -> IO(Result<&1, &1, Err, Stream>):
+  match ip:
+    case None{}:
+      IO.pure(Result<&1, &1, Err, Stream>, Fail{ErrDns{}})
+    case Some{addr}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        c : Result<&1, &1, Err, Conn> <- conn.open(tls, ms, host, addr, port)
+        stream.conn(c, ms, head, wire)
+
+# One connection per stream; the request says close.
+def stream.origin(+ms: U32, +head: Bool, wire: String, a: Url.Abs, known: Bool) -> IO(Result<&1, &1, Err, Stream>):
+  Url.Abs{+scheme, +host, +port, target} = a
+  match known:
+    case False{}:
+      IO.pure(Result<&1, &1, Err, Stream>, Fail{ErrUrl{}})
+    case True{}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        ip : Maybe<&2, String> <- Dns.resolve(host)
+        stream.ip(String.eq(scheme, "https"), ms, head, host, port, wire, ip)
+
+def stream.one(h: Hop, +ms: U32) -> IO(Result<&1, &1, Err, Stream>):
+  Hop{+method, +url, headers, body} = h
+  Url.Abs{scheme, host, port, +target} = url
+  stream.origin(ms, String.eq(method, "HEAD"), encode_req.on(method, target, Url.host_field(url), headers, body, True{}), url, pool.scheme.ok(url))
+
+# Go: the next request. Drop: close this stream, then go on. Done: the answer.
+type Sn is Type:
+  SnGo{left: Nat, hop: Hop}
+  SnDrop{st: Stream, next: Next}
+  SnDone{r: Result<&1, &1, Err, Stream>}
+
+def sn.of(n: Next) -> Sn:
+  match n:
+    case NGo{l, h}:
+      SnGo{l, h}
+    case NStop{}:
+      SnDone{Fail{ErrRedirect{}}}
+    case NDone{m}:
+      match m:
+        case Fail{e}:
+          SnDone{Fail{e}}
+        case Done{r}:
+          SnDone{Fail{ErrBad{}}}
+
+def stream.decide.n(st: Stream, n: Next) -> Sn:
+  match n:
+    case NDone{m}:
+      SnDone{Done{st}}
+    case NGo{l, h}:
+      SnDrop{st, NGo{l, h}}
+    case NStop{}:
+      SnDrop{st, NStop{}}
+
+def stream.decide.of(+left: Nat, +hop: Hop, sr: Stream & Res) -> Sn:
+  (st, res) = sr
+  stream.decide.n(st, fetch.decide(left, hop, Done{res}))
+
+def stream.decide(+left: Nat, +hop: Hop, r: Result<&1, &1, Err, Stream>) -> Sn:
+  match r:
+    case Fail{e}:
+      SnDone{Fail{e}}
+    case Done{st}:
+      stream.decide.of(left, hop, stream.res(st))
+
+@unsafe
+def stream.hops(+ms: U32, sn: Sn) -> IO(Result<&1, &1, Err, Stream>):
+  match sn:
+    case SnDone{r}:
+      IO.pure(Result<&1, &1, Err, Stream>, r)
+    case SnGo{+left, +hop}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        r : Result<&1, &1, Err, Stream> <- stream.one(hop, ms)
+        stream.hops(ms, stream.decide(left, hop, r))
+    case SnDrop{st, next}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        stream.close(st)
+        stream.hops(ms, sn.of(next))
+
+def stream.start(method: String, headers: Map<&2, List<&2, String>>, body: String, u: Maybe<&2, Url.Abs>) -> Sn:
+  match u:
+    case None{}:
+      SnDone{Fail{ErrUrl{}}}
+    case Some{a}:
+      SnGo{20n, Hop{method, a, req.put(Map.to_list(&2, List<&2, String>, headers), empty()), body}}
+
+# Http.open(method, url, headers, body) follows redirects like fetch and returns once the head is in.
+# Read the body with stream.read. Stream bodies are sent and returned as is: no Accept-Encoding, no decoding.
+def open.with(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, +ms: U32) -> IO(Result<&1, &1, Err, Stream>):
+  stream.hops(ms, stream.start(method, headers, body, Url.absolute(url)))
+
+def open(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String) -> IO(Result<&1, &1, Err, Stream>):
+  open.with(method, url, headers, body, 30000)
+
+# Upload: the request body sent in chunks (RFC 9112 §7.1). err: the first failed write.
+type Up is Type:
+  Up{tls: Bool, s: Socket, ms: U32, head: Bool, err: Maybe<&2, Err>}
+
+def hex.digit(+n: U32) -> Char:
+  Chr{Bool.pick(U32, U32.is_lt(n, 10), (48 + n : U32), (87 + n : U32))}
+
+def hex.go(k: Nat, +n: U32, acc: String) -> String:
+  match k:
+    case 0n:
+      acc
+    case 1n+p:
+      hex.go(p, U32.shrn(n, 4n), SCon{hex.digit(U32.and(n, 15)), acc})
+
+def hex.trim(+s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{+c}, +t}:
+      Bool.pick(String, Bool.and(U32.is_eq(c, 48), Bool.not(String.is_empty(t))), hex.trim(t), SCon{Chr{c}, t})
+
+def hex(+n: U32) -> String:
+  hex.trim(hex.go(8n, n, ""))
+
+def up.sent(+tls: Bool, +ms: U32, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> Up:
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      Up{tls, s, ms, head, Some{err.or_late(code, ErrWrite{code, why})}}
+    case Done{u}:
+      Up{tls, s, ms, head, None{}}
+
+def up.conn(r: Result<&1, &1, Err, Conn>, +ms: U32, +head: Bool, wire: String) -> IO(Result<&1, &1, Err, Up>):
+  match r:
+    case Fail{e}:
+      IO.pure(Result<&1, &1, Err, Up>, Fail{e})
+    case Done{c}:
+      Conn{+tls, s} = c
+      do IO<Result<&1, &1, Err, Up>>:
+        sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
+        return Done{up.sent(tls, ms, head, sent)}
+
+def up.ip(+tls: Bool, +ms: U32, +head: Bool, +host: String, +port: U32, wire: String, ip: Maybe<&2, String>) -> IO(Result<&1, &1, Err, Up>):
+  match ip:
+    case None{}:
+      IO.pure(Result<&1, &1, Err, Up>, Fail{ErrDns{}})
+    case Some{addr}:
+      do IO<Result<&1, &1, Err, Up>>:
+        c : Result<&1, &1, Err, Conn> <- conn.open(tls, ms, host, addr, port)
+        up.conn(c, ms, head, wire)
+
+def up.head(+method: String, +target: String, +hf: String, +headers: Map<&2, List<&2, String>>) -> String:
+  request(method, target, set(set(set(req.put(Map.to_list(&2, List<&2, String>, headers), empty()), "host", hf), "connection", "close"), "transfer-encoding", "chunked"), "")
+
+def up.origin(+method: String, +ms: U32, headers: Map<&2, List<&2, String>>, a: Url.Abs, known: Bool) -> IO(Result<&1, &1, Err, Up>):
+  Url.Abs{+scheme, +host, +port, +target} = a
+  match known:
+    case False{}:
+      IO.pure(Result<&1, &1, Err, Up>, Fail{ErrUrl{}})
+    case True{}:
+      do IO<Result<&1, &1, Err, Up>>:
+        ip : Maybe<&2, String> <- Dns.resolve(host)
+        up.ip(String.eq(scheme, "https"), ms, String.eq(method, "HEAD"), host, port, up.head(method, target, Url.host_field(a), headers), ip)
+
+def up.url(+method: String, +ms: U32, headers: Map<&2, List<&2, String>>, u: Maybe<&2, Url.Abs>) -> IO(Result<&1, &1, Err, Up>):
+  match u:
+    case None{}:
+      IO.pure(Result<&1, &1, Err, Up>, Fail{ErrUrl{}})
+    case Some{+a}:
+      up.origin(method, ms, headers, a, pool.scheme.ok(a))
+
+# Http.upload(method, url, headers) sends the head. A streamed body cannot be replayed, so redirects are not followed.
+def upload.with(+method: String, url: String, headers: Map<&2, List<&2, String>>, +ms: U32) -> IO(Result<&1, &1, Err, Up>):
+  up.url(method, ms, headers, Url.absolute(url))
+
+def upload(+method: String, url: String, headers: Map<&2, List<&2, String>>) -> IO(Result<&1, &1, Err, Up>):
+  upload.with(method, url, headers, 30000)
+
+def up.wrote(+tls: Bool, +ms: U32, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> Up & Result<&2, &2, Err, Unit>:
+  (s, r) = m
+  match r:
+    case Fail{(+code, why)}:
+      +e = err.or_late(code, ErrWrite{code, why})
+      (Up{tls, s, ms, head, Some{e}}, Fail{e})
+    case Done{u}:
+      (Up{tls, s, ms, head, None{}}, Done{Unit{}})
+
+def up.put(+tls: Bool, s: Socket, +ms: U32, +head: Bool, +piece: String, skip: Bool) -> IO(Up & Result<&2, &2, Err, Unit>):
+  match skip:
+    case True{}:
+      IO.pure(Up & Result<&2, &2, Err, Unit>, (Up{tls, s, ms, head, None{}}, Done{Unit{}}))
+    case False{}:
+      do IO<Up & Result<&2, &2, Err, Unit>>:
+        sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, hex(nat_u32(String.length(piece))) ++ "\r\n" ++ piece ++ "\r\n")
+        return up.wrote(tls, ms, head, sent)
+
+# One chunk. An empty piece sends nothing, since an empty chunk would end the body.
+def upload.write(up: Up, +piece: String) -> IO(Up & Result<&2, &2, Err, Unit>):
+  Up{+tls, s, +ms, +head, err} = up
+  match err:
+    case Some{+e}:
+      IO.pure(Up & Result<&2, &2, Err, Unit>, (Up{tls, s, ms, head, Some{e}}, Fail{e}))
+    case None{}:
+      up.put(tls, s, ms, head, piece, String.is_empty(piece))
+
+# Ends the body and returns the response as a stream.
+def upload.finish(up: Up) -> IO(Result<&1, &1, Err, Stream>):
+  Up{+tls, s, +ms, +head, err} = up
+  match err:
+    case Some{e}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        io.close(tls, s)
+        return Fail{e}
+    case None{}:
+      do IO<Result<&1, &1, Err, Stream>>:
+        sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, "0\r\n\r\n")
+        stream.sent(tls, ms, head, sent)
+
 def reply.bytes(res: Res, head: Bool, close: Bool) -> String:
   Res{+status, +headers, +body} = res
   encode.on(Res{status, Bool.pick(Map<&2, List<&2, String>>, close, set(headers, "connection", "close"), headers), body}, head)
