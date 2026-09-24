@@ -54,3 +54,27 @@ def tls.recv(sock: Socket, max: U32, ms: U32) ->
 def tls.close(sock: Socket) -> IO(Unit):
   import "./effs/wire.c"
   import "./effs/wire.js"
+
+# The .words forms move (len, words): bytes packed four to a U32, laid out as
+# bytes/bytes.bend packs them, so no String cell is made per byte.
+def recv.words(sock: Socket, max: U32, ms: U32) ->
+  IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  import "./effs/wire.c"
+  import "./effs/wire.js"
+
+# len past the end of words fails with EINVAL.
+def send.words(sock: Socket, len: U32, words: Array<U32>) ->
+  IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  import "./effs/wire.c"
+  import "./effs/wire.js"
+
+# len 0 once the peer sends close_notify.
+def tls.recv.words(sock: Socket, max: U32, ms: U32) ->
+  IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  import "./effs/wire.c"
+  import "./effs/wire.js"
+
+def tls.send.words(sock: Socket, len: U32, words: Array<U32>) ->
+  IO(Socket & Result<&1, &1, U32 & String, Unit>):
+  import "./effs/wire.c"
+  import "./effs/wire.js"
