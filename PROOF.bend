@@ -471,3 +471,24 @@ def Laws.pool_no_retry_post():
 
 def Laws.pool_no_retry_partial():
   {==}
+
+def Laws.decoded_gzip():
+  {==}
+
+def Laws.decoded_order():
+  {==}
+
+def Laws.decoded_unknown():
+  {==}
+
+def Laws.decoded_corrupt():
+  {==}
+
+def Laws.decoded_empty():
+  {==}
+
+def Laws.accept_enc_default():
+  {==}
+
+def Laws.accept_enc_caller():
+  {==}
