@@ -8,7 +8,8 @@ The goal is the best HTTP library for Bend. This is a ranked backlog, not a prom
 - `Http.fetch(method, url, headers, body)` does http and https, DNS, redirects (20 hops), and a 30 s timeout per step. `fetch.with(..., ms)` sets the timeout. It returns `Result<Res, Err>`: bad URL, DNS, connect, TLS (errno and verify text), read, write, timeout, too many redirects, or a malformed response. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Headers are a list per name. `header` is the first value. `Set-Cookie` is never joined. Encode writes one line per value.
 - Bodies are byte strings: one `Char` per octet. `Http.text` decodes UTF-8. `Http.json` parses that text. `Url.form` writes a form body.
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version.
-- Laws: http 119, url 57, json 40, dns 18, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
+- `bytes` (not yet published) is a byte buffer packed four bytes to a `U32` `Array` slot. It has bounds-checked `get`/`set`, `slice`, `append`, `find`, and `eq`, and it converts to and from byte strings. `bench/bytes` measures the layout. Nothing uses it yet.
+- Laws: http 119, url 57, json 40, dns 18, bytes 33, encoding 13, router 3. Run `bend PROOF.bend` in the root and in each package folder.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 - A bad chunk or bad framing is `FrameBad` while the connection is still open. A close-delimited TLS body that ends without `close_notify` is a read error. Content-Length and chunked bodies do not wait for that close. `100` and `103` are skipped; `101` is final.
 - `Dns.resolve` checks `/etc/hosts`, then the first three nameservers. `resolve.at` asks one server. A silent server is 2 attempts × 5 s, then the next server. `Http.exchange` does one request on an open socket and says whether that socket can take another.
@@ -22,8 +23,8 @@ The goal is the best HTTP library for Bend. This is a ranked backlog, not a prom
 - [ ] **A connection pool for fetch.** `exchange` leaves a socket open when another request can follow, but `fetch` still closes. Build a pool on top of `exchange`.
 - [ ] **gzip and deflate decoding.** Send `Accept-Encoding` and decode the body. Add br if a decoder is feasible.
 - [ ] **Stream request and response bodies.** Today every body is one string in memory.
-- [ ] **Speed up parsing.** A 1 MB JSON parse takes about 3.4 s of CPU, and a byte string costs one list cell per octet. Measure first; then try an array-backed buffer or chunked strings.
-- [ ] **Prove universal laws.** Most laws are fixtures. Add laws over all inputs for the claims that matter most: `fetch.gate` never says no to a whole message, `chunk.decode` inverts a chunk encoder, `parse.got` never says Bad to a prefix of a valid request, `utf8.decode(utf8.encode(s)) == s`, and `Json.parse(Json.encode(v)) == Some{v}`.
+- [ ] **Speed up parsing.** A 1 MB JSON parse takes about 3.4 s of CPU, and a byte string costs one list cell per octet. `bytes` is the array-backed buffer. Next, have `wire.recv` fill `Bytes` directly, then move `Http` framing onto it. That is a breaking change to `Res.body`.
+- [ ] **Prove universal laws.** Most laws are fixtures. Add laws over all inputs for the claims that matter most: `fetch.gate` never says no to a whole message, `chunk.decode` inverts a chunk encoder, `parse.got` never says Bad to a prefix of a valid request, `utf8.decode(utf8.encode(s)) == s`, `Json.parse(Json.encode(v)) == Some{v}`, and `Bytes.to_string(Bytes.from_string(s)) == s` for every byte string.
 - [ ] **IPv6 and the rest of DNS.** Add AAAA records and IPv6 connect (the runtime's `io_sys_addr` is IPv4 only). Also add a TCP retry when TC is set, and a small TTL cache.
 - [ ] **Report the runner overflow upstream.** `String.repeat`/`String.length` on about 30 KB overflows in the `bend file.bend` runner but not in native builds. Report it to Bend with the three-line repro.
 

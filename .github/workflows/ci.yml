@@ -24,10 +24,10 @@ jobs:
           export PATH="$HOME/.bend/bin:$PATH"
           bend PROOF.bend
           bend check.bend
-          for d in url json dns encoding router; do
+          for d in url json dns encoding router bytes; do
             (cd "$d" && bend PROOF.bend)
           done
-          for f in url json encoding router; do
+          for f in url json encoding router bytes; do
             bend "$f/check.bend"
           done
 
