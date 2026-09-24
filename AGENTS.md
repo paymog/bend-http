@@ -1,6 +1,6 @@
 # bend-net
 
-HTTP/1.1 client packages written in Bend 2. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide, and it matches the installed compiler. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
+HTTP/1.1 client packages written in Bend 2. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide for the installed compiler. Where the two disagree, the checker is right. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
 
 ## Bend in brief
 
@@ -9,9 +9,10 @@ Bend looks like Python but acts like Haskell or Lean, with Rust-style resource r
 - **Pure, with IO.** Effects live in `IO(T)` and run in `do IO<T>:` blocks. Every bind has a type: `x : T <- m`. `return v` wraps a pure value.
 - **Affine by default.** A variable is used at most once. `+x` lets you use it more than once, but only when its type is `Data` (copyable). `-x` is erased: types and proofs only. `type T is Data:` is copyable; `type T is Type:` is not. Closures, arrays, and handles (`Socket`, `File`) are `Type`, so every effect on a handle gives the handle back beside its result.
 - **Quantities in types.** `&0`, `&1`, `&2` say how often values of a type may be used. You see them everywhere here: `Maybe<&2, String>`, `Map<&2, List<&2, String>>`, `Result<&1, &1, U32 & String, Socket>`. `A & B` is a pair type; `(a, b)` is a pair value.
-- **Little inference.** Annotate when the checker cannot decide: `(n - 16 : U32)`. Operators inside `( : T)` call `T.add` and so on; without `: T` they are `Nat`. `==` is only the equality type. For a value test, call `U32.is_eq(a, b)` or `String.eq(a, b)`.
+- **Little inference.** Every operator expression needs a type: `(n - 16 : U32)`, `(t1 - t0 : Nat)`. Inside `( : T)`, operators call `T.add` and so on. A bare `a - b` is rejected, even though `bend guide` still says it means `Nat`. `==` is only the equality type. For a value test, call `U32.is_eq(a, b)` or `String.eq(a, b)`.
 - **No `if`.** Match on `True{}` / `False{}`, or use `Bool.pick(T, cond, a, b)`.
-- **`match` takes only a parameter or a pattern-bound variable.** A computed value cannot be the scrutinee. Pass it to a helper that matches on its parameter. This is why the code has chains like `fields_put.key` → `fields_put.dup`, and `drop_cr` → `drop_cr.if`. Dots in names are only characters.
+- **`match` takes only a parameter or a pattern-bound variable.** A computed value cannot be the scrutinee, and `(a, b) = f(x)` counts as a match. Pass the value to a helper that matches on its parameter. This is why the code has chains like `fields_put.key` → `fields_put.dup`, and `drop_cr` → `drop_cr.if`. Match parameters in the order they are declared: to match a `Bool` flag before destructuring an earlier parameter, put the flag first. Dots in names are only characters.
+- **Define before use.** A def can call only defs above it in the file (or imported), so helpers go first.
 - **Termination is checked.** Each recursive call must pass a structurally smaller piece of its input, and the checker reads arguments left to right, so put the shrinking parameter first. Mutual recursion is not allowed. Merge the functions into one def with a selector argument. For loops bounded by the outside world, count down a `Nat` fuel argument. `@unsafe` skips the check and loses the proof guarantees; avoid adding it (see ROADMAP.md).
 - **Literals.** `42` is `U32`, `3n` is `Nat`, `'c'` is `Char`, `"s"` is `String`. A `String` is a list of `Char`: `SCon{Chr{c}, t}` / `SNil{}`. Lists are `Con{h, t}` / `Nil{}`, and `[a, b]` or `h <> t`.
 - **Modules.** `import ./url/url.bend as Url` makes `Url.x` name each def in that file. A registry package imports by content hash: `import 0x<hash>/http.bend as Http`.
