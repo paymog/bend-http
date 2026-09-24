@@ -1,6 +1,6 @@
 # bend-net roadmap
 
-This is a backlog, not a promise. Items are grouped by when they matter: **before other people use it**, **after they do**, and **only if someone asks**. Each checkbox is one outcome. Move items when evidence changes.
+The goal is the best HTTP library for Bend. This is a ranked backlog, not a promise. The top of **Next** is what we work on now. Each checkbox is one outcome. Re-rank items when evidence changes.
 
 ## Current baseline
 
@@ -15,27 +15,25 @@ This is a backlog, not a promise. Items are grouped by when they matter: **befor
 - `Http.serve` reads until the request is whole (Content-Length or chunked), up to 1 MiB, then answers and closes. It sends the RFC 9110 reason phrase, `connection: close`, no body for HEAD, 1xx, 204 and 304, and accepts `HTTP/1.0` without `Host`. A bad request is 400; a request over 1 MiB is 413.
 - The README install and fetch example pass on clean Debian 12 containers (arm64 and amd64), in the runner and as a native build. The x86_64 Mac is not tested.
 
-## Before other people use it
+## Next
 
-- [ ] **Serve more than one request per connection.** `serve` closes after each response. Add keep-alive and pipelining with the leftover bytes, as `exchange` does for the client.
 - [ ] **Frame requests incrementally.** `serve` re-frames the whole buffer after each read, which is O(n²), so requests stop at 1 MiB. Reverse-buffer and gate like `fetch.loop`, then let the caller set the cap.
-
-## After people use it
-
-- [ ] **IPv6 and the rest of DNS.** Add AAAA records and IPv6 connect (the runtime's `io_sys_addr` is IPv4 only). Also add a TCP retry when TC is set, and a small TTL cache. `/etc/hosts` is read. The first three nameservers are tried.
-- [ ] **Make the url package total.** `pct.decode.go` and `hexhi.go` are `@unsafe`. Rewrite them with fuel or structural recursion, like the other packages.
-- [ ] **Prove universal laws.** Most laws are fixtures. Add laws over all inputs for the claims that matter most: `fetch.gate` never says no to a whole message, `chunk.decode` inverts a chunk encoder, `utf8.decode(utf8.encode(s)) == s`, and `Json.parse(Json.encode(v)) == Some{v}`.
-- [ ] **JSON number to F32.** `Json.at` and `Json.u32` exist. `json.encode` is still `@unsafe` because it walks a work list.
+- [ ] **Serve more than one request per connection.** `serve` closes after each response. Add keep-alive and pipelining with the leftover bytes, as `exchange` does for the client.
+- [ ] **A connection pool for fetch.** `exchange` leaves a socket open when another request can follow, but `fetch` still closes. Build a pool on top of `exchange`.
+- [ ] **gzip and deflate decoding.** Send `Accept-Encoding` and decode the body. Add br if a decoder is feasible.
+- [ ] **Stream request and response bodies.** Today every body is one string in memory.
 - [ ] **Speed up parsing.** A 1 MB JSON parse takes about 3.4 s of CPU, and a byte string costs one list cell per octet. Measure first; then try an array-backed buffer or chunked strings.
+- [ ] **Prove universal laws.** Most laws are fixtures. Add laws over all inputs for the claims that matter most: `fetch.gate` never says no to a whole message, `chunk.decode` inverts a chunk encoder, `parse.got` never says Bad to a prefix of a valid request, `utf8.decode(utf8.encode(s)) == s`, and `Json.parse(Json.encode(v)) == Some{v}`.
+- [ ] **IPv6 and the rest of DNS.** Add AAAA records and IPv6 connect (the runtime's `io_sys_addr` is IPv4 only). Also add a TCP retry when TC is set, and a small TTL cache.
 - [ ] **Report the runner overflow upstream.** `String.repeat`/`String.length` on about 30 KB overflows in the `bend file.bend` runner but not in native builds. Report it to Bend with the three-line repro.
 
-## Only if someone asks
+## Later
 
-- [ ] **A connection pool.** `exchange` does one request on an open socket and leaves it open when another request can follow. `fetch` still closes. A pool on top of `exchange` is not built.
-- [ ] Streaming request and response bodies.
-- [ ] gzip/br decoding (`Accept-Encoding`).
+- [ ] **Make the url package total.** `pct.decode.go` and `hexhi.go` are `@unsafe`. Rewrite them with fuel or structural recursion, like the other packages.
+- [ ] **JSON number to F32.** `Json.at` and `Json.u32` exist. `json.encode` is still `@unsafe` because it walks a work list.
 - [ ] A cookie jar, proxies (`HTTP_PROXY`), client certificates, ALPN, HTTP/2.
 - [ ] Windows support (the effects use POSIX sockets and `dlopen`).
+- [ ] Test on an x86_64 Mac.
 
 ## Depends on Elbow
 
