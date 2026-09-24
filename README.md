@@ -6,7 +6,7 @@ HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, 
 
 ## Install
 
-You need [Bend 2.0.26](https://bend-lang.com/install.sh), [Bun 1.4.2](https://bun.sh/docs/installation), and Elbow 0.1.0. macOS or Linux, including WSL. Windows is not supported.
+You need [Bend 2.0.26 or newer](https://bend-lang.com/install.sh), [Bun 1.4.2](https://bun.sh/docs/installation), and Elbow 0.1.0. macOS or Linux, including WSL. Windows is not supported.
 
 ```sh
 version=0.1.0
