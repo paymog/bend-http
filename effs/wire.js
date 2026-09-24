@@ -23,6 +23,34 @@ function wire_octets(data) {
   return b;
 }
 
+// Twins of wire_words and wire_words_octets in wire.c: a Tuple (n, words), with
+// byte i in bits 8*(i%4) of word i/4 and 2^d words, the fewest that hold n.
+function wire_words(b, n) {
+  const w = Math.ceil(n / 4);
+  let size = 1;
+  while (size < w) {
+    size *= 2;
+  }
+  const a = Array(size).fill(0);
+  for (let i = 0; i < n; i += 1) {
+    a[i >> 2] = (a[i >> 2] | (b[i] << (8 * (i & 3)))) >>> 0;
+  }
+  return { $: "Tuple", fst: n, snd: a };
+}
+
+// null when n runs past the words.
+function wire_words_octets(n, a) {
+  n = Number(n);
+  if (n > 4 * a.length) {
+    return null;
+  }
+  const b = new Uint8Array(n);
+  for (let i = 0; i < n; i += 1) {
+    b[i] = (a[i >> 2] >>> (8 * (i & 3))) & 255;
+  }
+  return b;
+}
+
 // A deadline in performance.now() ms, or undefined for none.
 function wire_deadline(ms) {
   return Number(ms) ? performance.now() + Number(ms) : undefined;
@@ -37,6 +65,14 @@ function wire_timedout() {
 }
 
 function recv(socket, max, ms, k) {
+  return wire_recv(socket, max, ms, k, wire_text);
+}
+
+function recv_words(socket, max, ms, k) {
+  return wire_recv(socket, max, ms, k, wire_words);
+}
+
+function wire_recv(socket, max, ms, k, out) {
   const sys = io_sys();
   const fd = socket;
   const b = new Uint8Array(Math.max(Number(max), 1));
@@ -55,16 +91,23 @@ function recv(socket, max, ms, k) {
       }
       return io_tup(socket, io_fail(code));
     }
-    return io_tup(socket, io_done(wire_text(b, n)));
+    return io_tup(socket, io_done(out(b, n)));
   };
   return go();
 }
 
 
 function send(socket, data, k) {
+  return wire_send(socket, wire_octets(data), k);
+}
+
+function send_words(socket, n, words, k) {
+  return wire_send(socket, wire_words_octets(n, words), k);
+}
+
+function wire_send(socket, b, k) {
   const sys = io_sys();
   const fd = socket;
-  const b = wire_octets(data);
   if (b === null) {
     return io_tup(socket, io_fail(22));
   }
@@ -237,9 +280,16 @@ function tls_connect(socket, host, ms, k) {
 }
 
 function tls_send(socket, data, k) {
+  return wire_tls_send(socket, wire_octets(data), k);
+}
+
+function tls_send_words(socket, n, words, k) {
+  return wire_tls_send(socket, wire_words_octets(n, words), k);
+}
+
+function wire_tls_send(socket, b, k) {
   const t = wire_tls();
   const ssl = t && t.by.get(socket);
-  const b = wire_octets(data);
   if (!ssl) {
     return io_tup(socket, io_fail(9));
   }
@@ -266,6 +316,14 @@ function tls_send(socket, data, k) {
 }
 
 function tls_recv(socket, max, ms, k) {
+  return wire_tls_recv(socket, max, ms, k, wire_text);
+}
+
+function tls_recv_words(socket, max, ms, k) {
+  return wire_tls_recv(socket, max, ms, k, wire_words);
+}
+
+function wire_tls_recv(socket, max, ms, k, out) {
   const at = wire_deadline(ms);
   const t = wire_tls();
   const ssl = t && t.by.get(socket);
@@ -276,7 +334,7 @@ function tls_recv(socket, max, ms, k) {
   const go = () => {
     const n = t.s.SSL_read(ssl, t.ffi.ptr(b), b.length);
     if (n > 0) {
-      return io_tup(socket, io_done(wire_text(b, n)));
+      return io_tup(socket, io_done(out(b, n)));
     }
     const err = t.s.SSL_get_error(ssl, n);
     if (err === 2 || err === 3) {
@@ -287,7 +345,7 @@ function tls_recv(socket, max, ms, k) {
       return undefined;
     }
     if (err === 6) {
-      return io_tup(socket, io_done(""));
+      return io_tup(socket, io_done(out(b, 0)));
     }
     return io_tup(socket, { $: "Fail", error: io_tup(5, "TLS read failed") });
   };
