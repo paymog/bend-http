@@ -1,0 +1,88 @@
+use std::hint::black_box;
+use std::time::Instant;
+
+fn fill_buf(b: &mut [u8]) -> u32 {
+    for (i, byte) in b.iter_mut().enumerate() {
+        *byte = ((i as u64 * 31 + 7) & 255) as u8;
+    }
+    let n = b.len();
+    b[n - 4] = 13;
+    b[n - 3] = 10;
+    b[n - 2] = 13;
+    b[n - 1] = 10;
+    b[12345] as u32 + b[n - 1] as u32
+}
+
+fn main() {
+    let l: u32 = std::env::args()
+        .nth(1)
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(28);
+    let n = 1usize << l;
+
+    let t0 = Instant::now();
+    let mut b = vec![0u8; n];
+    let cs = fill_buf(&mut b);
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!("fill\t{ms:.6}\t{cs}");
+
+    let t0 = Instant::now();
+    let mut sum: u32 = 0;
+    for &byte in &b {
+        sum = sum.wrapping_add(byte as u32);
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!("sum\t{ms:.6}\t{sum}");
+
+    let needle = [13u8, 10, 13, 10];
+    let t0 = Instant::now();
+    let find_idx = b
+        .windows(4)
+        .position(|w| w == needle)
+        .unwrap_or(usize::MAX);
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!("find\t{ms:.6}\t{}", find_idx as u32);
+
+    let slice_start = n / 4 + 1;
+    let slice_len = n / 2;
+    let t0 = Instant::now();
+    let s: Vec<u8> = b[slice_start..slice_start + slice_len].to_vec();
+    let cs = s[0] as u32 + s[s.len() - 1] as u32;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!("slice\t{ms:.6}\t{cs}");
+
+    let t0 = Instant::now();
+    let mut out: Vec<u8> = Vec::new();
+    let chunks = n / 65536;
+    for k in 0..chunks {
+        let byte = (k & 255) as u8;
+        out.extend(std::iter::repeat(byte).take(65536));
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    if out.len() != n {
+        std::process::exit(1);
+    }
+    let cs = out[0] as u32 + out[out.len() - 1] as u32;
+    println!("concat\t{ms:.6}\t{cs}");
+
+    let mut x: u32 = 1;
+    let mut acc: u32 = 0;
+    let shift = 32 - l;
+    let t0 = Instant::now();
+    for _ in 0..(1u32 << 24) {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        let idx = (x >> shift) as usize;
+        acc = acc.wrapping_add(b[idx] as u32);
+    }
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    black_box(acc);
+    println!("random\t{ms:.6}\t{acc}");
+
+    let c = b.clone();
+    let t0 = Instant::now();
+    let eq = b == c;
+    let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    println!("equal\t{ms:.6}\t{}", if eq { 1u32 } else { 0 });
+
+    black_box(b);
+}
