@@ -225,6 +225,38 @@ def append(a: Bytes, b: Bytes) -> Bytes:
   +n = (la + lb : U32)
   append.two(n, la, lb, bb, copy(la, ba, alloc(n), 0, 0))
 
+def concat.total.con(x: Bytes, r: List<&1, Bytes> & U32) -> List<&1, Bytes> & U32:
+  (t, n) = r
+  (Con{x, t}, n)
+
+def concat.total(xs: List<&1, Bytes>, +n: U32) -> List<&1, Bytes> & U32:
+  match xs:
+    case Nil{}:
+      (Nil{}, n)
+    case Con{x, t}:
+      Bytes{+l, buf} = x
+      concat.total.con(Bytes{l, buf}, concat.total(t, (n + l : U32)))
+
+def concat.put(r: Array<U32> & Array<U32>) -> Array<U32>:
+  (src, out) = r
+  out
+
+def concat.go(xs: List<&1, Bytes>, out: Array<U32>, +at: U32) -> Array<U32>:
+  match xs:
+    case Nil{}:
+      out
+    case Con{x, t}:
+      Bytes{+l, buf} = x
+      concat.go(t, concat.put(copy(l, buf, out, 0, at)), (at + l : U32))
+
+def concat.of(r: List<&1, Bytes> & U32) -> Bytes:
+  (xs, +n) = r
+  Bytes{n, concat.go(xs, alloc(n), 0)}
+
+# The pieces in order, in one new buffer: one copy per byte, however many pieces.
+def concat(xs: List<&1, Bytes>) -> Bytes:
+  concat.of(concat.total(xs, 0))
+
 # Does needle match at j? ok is the previous byte's result; the first mismatch stops the walk.
 def at.go(needle: String, ok: Bool, r: Array<U32> & U32, +j: U32) -> Array<U32> & Bool:
   match needle:
