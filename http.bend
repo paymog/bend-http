@@ -1051,6 +1051,138 @@ def after.go(+raw: String, n: Need, f: Frame) -> Maybe<&2, String>:
 def after(+raw: String, +head: Bool) -> Maybe<&2, String>:
   after.go(raw, need(raw, head), frame(raw, False{}, head))
 
+def req.need.te.kind(chunked: Bool) -> Need:
+  match chunked:
+    case True{}:
+      NeedChunk{}
+    case False{}:
+      NeedNow{}
+
+def req.need.te(+h: Map<&2, List<&2, String>>, cl: Bool, chunked: Bool) -> Need:
+  match cl:
+    case True{}:
+      NeedNow{}
+    case False{}:
+      req.need.te.kind(chunked)
+
+def req.need.cl(+h: Map<&2, List<&2, String>>, hlen: Nat, cl: Bool) -> Need:
+  match cl:
+    case True{}:
+      need.cl(hlen, parse_u32(header(h, "content-length")))
+    case False{}:
+      NeedNow{}
+
+def req.need.framing(+h: Map<&2, List<&2, String>>, hlen: Nat, te: Bool, cl: Bool) -> Need:
+  match te:
+    case True{}:
+      req.need.te(h, cl, String.eq(String.to_lower(header.last(h, "transfer-encoding")), "chunked"))
+    case False{}:
+      req.need.cl(h, hlen, cl)
+
+def req.need.headers(hlen: Nat, fs: Maybe<&2, Map<&2, List<&2, String>>>) -> Need:
+  match fs:
+    case None{}:
+      NeedNow{}
+    case Some{+h}:
+      req.need.framing(h, hlen, has_header(h, "transfer-encoding"), has_header(h, "content-length"))
+
+def req.need.start3(mpv: String & String & String, headers: List<&2, String>, hlen: Nat) -> Need:
+  (+method, path, version) = mpv
+  req.need.headers(hlen, parse.headers(headers, FieldsOk{empty()}))
+
+def req.need.lines(xs: List<&2, String>, hlen: Nat) -> Need:
+  match xs:
+    case Nil{}:
+      NeedNow{}
+    case Con{line, headers}:
+      req.need.start3(start_line(line), headers, hlen)
+
+def req.need.blank(+hd: String, ok: Bool) -> Need:
+  match ok:
+    case False{}:
+      NeedHead{}
+    case True{}:
+      req.need.lines(String.lines(hd), String.length(hd))
+
+def req.need.of(hb: String & String) -> Need:
+  (+hd, rest) = hb
+  req.need.blank(hd, String.ends_with(hd, "\r\n\r\n"))
+
+def req.need(+raw: String) -> Need:
+  req.need.of(split_at_blank(raw))
+
+def req.after.got(+raw: String, n: Need, g: Got) -> Maybe<&2, String>:
+  match g:
+    case GotBad{}:
+      None{}
+    case GotMore{}:
+      None{}
+    case GotReq{req}:
+      after.need(raw, n)
+
+def req.after(+raw: String) -> Maybe<&2, String>:
+  req.after.got(raw, req.need(raw), parse.got(raw))
+
+
+def req.v11.ver(mpv: String & String & String) -> Bool:
+  (+method, path, v) = mpv
+  String.eq(v, "HTTP/1.1")
+
+def req.v11.line(+line: String) -> Bool:
+  req.v11.ver(start_line(line))
+
+def req.v11.lines(xs: List<&2, String>) -> Bool:
+  match xs:
+    case Nil{}:
+      False{}
+    case Con{line, headers}:
+      req.v11.line(line)
+
+def req.v11.pick(+head: String, ok: Bool) -> Bool:
+  match ok:
+    case False{}:
+      False{}
+    case True{}:
+      req.v11.lines(String.lines(head))
+
+def req.v11.of(hb: String & String) -> Bool:
+  (+head, rest) = hb
+  req.v11.pick(head, String.ends_with(head, "\r\n\r\n"))
+
+def req.v11(+raw: String) -> Bool:
+  req.v11.of(split_at_blank(raw))
+
+def req.conn_close(+headers: Map<&2, List<&2, String>>) -> Bool:
+  String.eq(String.to_lower(header(headers, "connection")), "close")
+
+def res.conn_close(+headers: Map<&2, List<&2, String>>) -> Bool:
+  String.eq(String.to_lower(header(headers, "connection")), "close")
+
+def serve.fail_close(+status: U32) -> Bool:
+  Bool.or(U32.is_eq(status, 400), U32.is_eq(status, 413))
+
+def serve.keep.ok(fail: Bool, res_close: Bool) -> Bool:
+  match fail:
+    case True{}:
+      False{}
+    case False{}:
+      Bool.not(res_close)
+
+def serve.keep.v11(v11: Bool, +req_close: Bool, +status: U32, res_close: Bool) -> Bool:
+  match v11:
+    case False{}:
+      False{}
+    case True{}:
+      match req_close:
+        case True{}:
+          False{}
+        case False{}:
+          serve.keep.ok(serve.fail_close(status), res_close)
+
+def serve.keep(+headers: Map<&2, List<&2, String>>, v11: Bool, +status: U32, +res: Map<&2, List<&2, String>>) -> Bool:
+  serve.keep.v11(v11, req.conn_close(headers), status, res.conn_close(res))
+
+
 def again.rest(+close: Bool, +h: Map<&2, List<&2, String>>, rest: Maybe<&2, String>) -> Bool:
   match rest:
     case None{}:
@@ -1661,102 +1793,237 @@ def fetch(method: String, url: String, headers: Map<&2, List<&2, String>>, body:
 def get(url: String) -> IO(Result<&2, &2, Err, Res>):
   fetch("GET", url, empty(), "")
 
-def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
+def reply.bytes(res: Res, head: Bool, close: Bool) -> String:
+  Res{+status, +headers, +body} = res
+  encode.on(Res{status, Bool.pick(Map<&2, List<&2, String>>, close, set(headers, "connection", "close"), headers), body}, head)
+
+def reply.fail.bytes(+status: U32) -> Res:
+  Res{status, empty(), reason(status)}
+
+def reply.sent.close(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
   (s, r) = m
   Socket.close(s)
-
-# serve closes after each response, so it says so.
-def reply_send(s: Socket, +head: Bool, res: Res) -> IO(Unit):
-  Res{status, headers, body} = res
-  do IO<Unit>:
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode.on(Res{status, set(headers, "connection", "close"), body}, head))
-    sent_fin(sent)
-
-def reply_fail(s: Socket, +status: U32) -> IO(Unit):
-  reply_send(s, False{}, Res{status, empty(), reason(status)})
 
 def reply_handle(~h: Req -> IO(Res), s: Socket, req: Req) -> IO(Unit):
   Req{+method, path, headers, body} = req
   do IO<Unit>:
     res : Res <- h(Req{method, path, headers, body})
-    reply_send(s, String.eq(method, "HEAD"), res)
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, reply.bytes(res, String.eq(method, "HEAD"), True{}))
+    reply.sent.close(sent)
 
-# What serve does after a read: close, refuse, handle, or read on.
+def reply_fail(s: Socket, +status: U32) -> IO(Unit):
+  do IO<Unit>:
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode(reply.fail.bytes(status)))
+    reply.sent.close(sent)
+
+
+type Rq is Data:
+  Rq{rbuf: String, n: Nat, need: Need, g: Got}
+
 type Turn is Data:
   TurnClose{}
   TurnFail{status: U32}
-  TurnReq{req: Req}
-  TurnMore{buf: String}
+  TurnReq{req: Req, rest: Maybe<&2, String>, v11: Bool}
+  TurnMore{rq: Rq}
 
-def talk.got(g: Got, buf: String) -> Turn:
+def serve.need(hint: Need, +rbuf: String) -> Need:
+  match hint:
+    case NeedHead{}:
+      req.need(String.reverse(rbuf))
+    case NeedLen{t}:
+      NeedLen{t}
+    case NeedChunk{}:
+      NeedChunk{}
+    case NeedClose{}:
+      NeedClose{}
+    case NeedNow{}:
+      NeedNow{}
+
+def serve.gate(closed: Bool, need: Need, +n: Nat, +got: String) -> Bool:
+  fetch.gate(closed, need, n, got)
+
+def serve.try.gate(gate: Bool, +rbuf: String) -> Got:
+  match gate:
+    case True{}:
+      parse.got(String.reverse(rbuf))
+    case False{}:
+      GotMore{}
+
+def serve.try.go(gate: Bool, chunked: Bool, rbuf: String) -> Got:
+  match chunked:
+    case True{}:
+      parse.got(String.reverse(rbuf))
+    case False{}:
+      serve.try.gate(gate, rbuf)
+
+def serve.try.closed.got(closed: Bool, g: Got) -> Got:
+  match closed:
+    case False{}:
+      g
+    case True{}:
+      match g:
+        case GotMore{}:
+          GotBad{}
+        case GotBad{}:
+          GotBad{}
+        case GotReq{req}:
+          GotReq{req}
+
+def serve.try(gate: Bool, need: Need, rbuf: String, closed: Bool) -> Got:
+  serve.try.closed.got(closed, serve.try.go(gate, fetch.chunked(need), rbuf))
+
+# ponytail: 64 KiB header allowance above the body cap; larger configurable headers need a separate limit.
+def serve.limit(+max: Nat) -> Nat:
+  Nat.add(max, 65536n)
+
+def serve.big(+max: Nat, +n: Nat) -> Bool:
+  Nat.is_lt(serve.limit(max), n)
+
+def serve.cl_big(+max: Nat, need: Need) -> Bool:
+  match need:
+    case NeedLen{t}:
+      Nat.is_lt(serve.limit(max), t)
+    case NeedHead{}:
+      False{}
+    case NeedChunk{}:
+      False{}
+    case NeedClose{}:
+      False{}
+    case NeedNow{}:
+      False{}
+
+def serve.too_big(+max: Nat, n: Nat, need: Need) -> Bool:
+  Bool.or(serve.big(max, n), serve.cl_big(max, need))
+
+def talk.rq0() -> Rq:
+  Rq{"", 0n, NeedHead{}, GotMore{}}
+
+def talk.rq(+raw: String) -> Rq:
+  Rq{String.reverse(raw), String.length(raw), req.need(raw), parse.got(raw)}
+
+def talk.step(rq: Rq, +got: String, +closed: Bool) -> Rq:
+  Rq{rbuf, n, need, g} = rq
+  +rbuf2 = {String.reverse(got) ++ rbuf : String}
+  +n2 = Nat.add(n, String.length(got))
+  +need2 = serve.need(need, rbuf2)
+  Rq{rbuf2, n2, need2, serve.try(serve.gate(closed, need2, n2, got), need2, rbuf2, closed)}
+
+def talk.turn.got(+rbuf: String, n: Nat, need: Need, g: Got) -> Turn:
   match g:
     case GotBad{}:
       TurnFail{400}
     case GotMore{}:
-      TurnMore{buf}
+      TurnMore{Rq{rbuf, n, need, g}}
     case GotReq{req}:
-      TurnReq{req}
+      +raw = String.reverse(rbuf)
+      TurnReq{req, req.after(raw), req.v11(raw)}
 
-# ponytail: 1 MiB, nginx's default; re-framing is O(n²), so a bigger cap needs incremental framing.
-def serve.max() -> Nat:
-  U32.to_nat(1048576)
-
-def talk.size(+buf: String, big: Bool) -> Turn:
+def talk.turn.pick(big: Bool, rbuf: String, n: Nat, need: Need, g: Got) -> Turn:
   match big:
     case True{}:
       TurnFail{413}
     case False{}:
-      talk.got(parse.got(buf), buf)
+      talk.turn.got(rbuf, n, need, g)
 
-# An empty recv means the client closed before a whole request.
-def talk.closed(buf: String, +got: String, closed: Bool) -> Turn:
-  match closed:
-    case True{}:
-      TurnClose{}
-    case False{}:
-      +buf2 = {buf ++ got : String}
-      talk.size(buf2, Nat.is_lt(serve.max(), String.length(buf2)))
+def talk.turn.check(+max: Nat, +n: Nat, +need: Need, rbuf: String, g: Got) -> Turn:
+  talk.turn.pick(serve.too_big(max, n, need), rbuf, n, need, g)
 
-def talk.next(buf: String, m: Socket & Result<&1, &1, U32 & String, String>) -> Socket & Turn:
+def talk.turn(max: Nat, rq: Rq) -> Turn:
+  Rq{rbuf, n, need, g} = rq
+  talk.turn.check(max, n, need, rbuf, g)
+
+def serve.max() -> Nat:
+  fetch.max()
+
+def talk.next(+max: Nat, rq: Rq, m: Socket & Result<&1, &1, U32 & String, String>) -> Socket & Turn:
   (s, r) = m
   match r:
     case Fail{e}:
       (s, TurnClose{})
     case Done{+got}:
-      (s, talk.closed(buf, got, String.is_empty(got)))
+      (s, talk.turn(max, talk.step(rq, got, String.is_empty(got))))
 
-# ponytail: one request per connection; add keep-alive when a client needs it.
+
+def talk.keep(+headers: Map<&2, List<&2, String>>, v11: Bool, +res: Res) -> Bool:
+  Res{+status, +rh, body} = res
+  serve.keep(headers, v11, status, rh)
+
+
+def talk.after.rest.raw(+max: Nat, +raw: String, empty: Bool, s: Socket) -> Socket & Turn:
+  match empty:
+    case True{}:
+      (s, TurnMore{talk.rq0()})
+    case False{}:
+      (s, talk.turn(max, talk.rq(raw)))
+
+def talk.after.rest(+max: Nat, rest: Maybe<&2, String>, s: Socket) -> Socket & Turn:
+  match rest:
+    case None{}:
+      (s, TurnMore{talk.rq0()})
+    case Some{+raw}:
+      talk.after.rest.raw(max, raw, String.is_empty(raw), s)
+
+
+def talk.after.keep(+max: Nat, keep: Bool, rest: Maybe<&2, String>, s: Socket) -> Socket & Turn:
+  match keep:
+    case False{}:
+      (s, TurnClose{})
+    case True{}:
+      talk.after.rest(max, rest, s)
+
+def talk.after(+max: Nat, keep: Bool, rest: Maybe<&2, String>, m: Socket & Result<&1, &1, U32 & String, Unit>) -> Socket & Turn:
+  (s, r) = m
+  match r:
+    case Fail{e}:
+      (s, TurnClose{})
+    case Done{unit}:
+      talk.after.keep(max, keep, rest, s)
+
+def talk.send(+max: Nat, s: Socket, rest: Maybe<&2, String>, +headers: Map<&2, List<&2, String>>, v11: Bool, +head: Bool, +res: Res) -> IO(Socket & Turn):
+  +keep = talk.keep(headers, v11, res)
+  do IO<Socket & Turn>:
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, reply.bytes(res, head, Bool.not(keep)))
+    return talk.after(max, keep, rest, sent)
+
+
 @unsafe
-def talk(~h: Req -> IO(Res), st: Socket & Turn) -> IO(Unit):
+def talk(~h: Req -> IO(Res), +max: Nat, st: Socket & Turn) -> IO(Unit):
   (s, t) = st
   match t:
-    case TurnMore{buf}:
+    case TurnMore{rq}:
       do IO<Unit>:
         m : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 65536, 30000)
-        talk(~h, talk.next(buf, m))
-    case TurnReq{req}:
-      reply_handle(h, s, req)
+        talk(~h, max, talk.next(max, rq, m))
+    case TurnReq{req, rest, v11}:
+      Req{+method, path, +headers, body} = req
+      do IO<Unit>:
+        res : Res <- h(Req{method, path, headers, body})
+        next : Socket & Turn <- talk.send(max, s, rest, headers, v11, String.eq(method, "HEAD"), res)
+        talk(~h, max, next)
     case TurnFail{status}:
       reply_fail(s, status)
     case TurnClose{}:
       Socket.close(s)
 
-def conn(~h: Req -> IO(Res), m: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Listener):
+def conn(~h: Req -> IO(Res), +max: Nat, m: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Listener):
   (l, r) = m
   do IO<Listener>:
     s : Socket <- IO.pass(Socket, r)
-    IO.spawn(Unit, talk(~h, (s, TurnMore{""})))
+    IO.spawn(Unit, talk(~h, max, (s, TurnMore{talk.rq0()})))
     return l
 
 @unsafe
-def loop(~h: Req -> IO(Res), l: Listener) -> IO(Unit):
+def loop(~h: Req -> IO(Res), +max: Nat, l: Listener) -> IO(Unit):
   do IO<Unit>:
     m  : Listener & Result<&1, &1, U32 & String, Socket> <- TCP.accept(l)
-    l2 : Listener <- conn(~h, m)
-    loop(~h, l2)
+    l2 : Listener <- conn(~h, max, m)
+    loop(~h, max, l2)
 
-def serve(~h: Req -> IO(Res), +port: U32) -> IO(Unit):
+def serve.with(~h: Req -> IO(Res), +port: U32, +max: Nat) -> IO(Unit):
   do IO<Unit>:
     l : Listener <- IO.try(Listener, TCP.listen(port))
     IO.print("http://127.0.0.1:" ++ U32.show(port))
-    loop(~h, l)
+    loop(~h, max, l)
+
+def serve(~h: Req -> IO(Res), +port: U32) -> IO(Unit):
+  serve.with(~h, port, serve.max())

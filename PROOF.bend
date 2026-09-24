@@ -424,3 +424,25 @@ def Laws.encode_204_nobody():
 
 def Laws.encode_head():
   {==}
+
+
+def Laws.serve_keep_v11():
+  {==}
+
+def Laws.serve_keep_close():
+  {==}
+
+def Laws.serve_keep_http10():
+  {==}
+
+def Laws.req_after_content_length():
+  {==}
+
+def Laws.req_after_chunked():
+  {==}
+
+def Laws.req_hint_complete():
+  {==}
+
+def Laws.req_need_content_length():
+  {==}
