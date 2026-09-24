@@ -507,3 +507,19 @@ law chunk_feed_split_size:
 # Bytes after the last chunk and trailer belong to the next request.
 law chunk_suffix_pipelined:
   {Http.chunk.suffix("1\r\na\r\n0\r\nT: 1\r\n\r\nGET") == Some{"GET"} : Maybe<&2, String>}
+
+# Idle sockets are keyed by origin: scheme, host, and port.
+law pool_key_origin:
+  {Http.pool.key("https", "example.com", 443) == "https://example.com:443" : String}
+
+# RFC 9112 §9.3.1: an idempotent request on a reused socket that got no response byte is retried.
+law pool_retry_get_stale:
+  {Http.pool.retry(True{}, Http.pool.idempotent("GET")) == True{} : Bool}
+
+# RFC 9110 §9.2.2: POST is not idempotent, so it is never retried.
+law pool_no_retry_post:
+  {Http.pool.retry(True{}, Http.pool.idempotent("POST")) == False{} : Bool}
+
+# A response that had started is never retried.
+law pool_no_retry_partial:
+  {Http.pool.retry(False{}, Http.pool.idempotent("GET")) == False{} : Bool}
