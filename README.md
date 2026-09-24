@@ -69,7 +69,7 @@ def main() -> IO(Unit):
 
 `Http.get` is `fetch("GET", url, Http.empty(), "")`.
 
-A response body over about 30 KB overflows `bend file.bend`. Compile it:
+A response body over about 30 KB overflows `bend file.bend`. Compile it. That needs clang 14 or newer (`apt install clang` on Debian 12 or Ubuntu 22.04 and later; `xcode-select --install` on macOS):
 
 ```sh
 bend file.bend -o app
