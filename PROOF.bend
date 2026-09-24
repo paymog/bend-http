@@ -392,6 +392,27 @@ def Laws.vary_kept():
 def Laws.set_cookie_lines():
   {==}
 
+def Laws.req_head_more():
+  {==}
+
+def Laws.req_cl_more():
+  {==}
+
+def Laws.req_chunk_more():
+  {==}
+
+def Laws.req_chunk_bad():
+  {==}
+
+def Laws.req_te_other_bad():
+  {==}
+
+def Laws.req_http2_bad():
+  {==}
+
+def Laws.req_http10_no_host():
+  {==}
+
 def Laws.reason_404():
   {==}
 

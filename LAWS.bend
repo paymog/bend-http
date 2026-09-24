@@ -423,6 +423,34 @@ law vary_kept:
 law set_cookie_lines:
   {Http.headers_block(Http.add(Http.add(Http.empty(), "set-cookie", "a=1"), "set-cookie", "b=2")) == "\r\nset-cookie: a=1\r\nset-cookie: b=2" : String}
 
+# serve reads on while the header block is open.
+law req_head_more:
+  {Http.parse.got("GET / HTTP/1.1\r\nHost: x\r\n") == Http.GotMore{} : Http.Got}
+
+# RFC 9112 §6.3 (6): a body shorter than Content-Length is read on, not refused.
+law req_cl_more:
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == Http.GotMore{} : Http.Got}
+
+# RFC 9112 §7.1: an open chunked body is read on.
+law req_chunk_more:
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi") == Http.GotMore{} : Http.Got}
+
+# A bad chunk size is refused at once, not waited on.
+law req_chunk_bad:
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\nzz\r\n") == Http.GotBad{} : Http.Got}
+
+# RFC 9112 §6.3 (4): a request coding other than chunked is refused.
+law req_te_other_bad:
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: gzip\r\n\r\n") == Http.GotBad{} : Http.Got}
+
+# Only HTTP/1.1 and HTTP/1.0 request lines are messages.
+law req_http2_bad:
+  {Http.parse.got("GET / HTTP/2.0\r\nHost: x\r\n\r\n") == Http.GotBad{} : Http.Got}
+
+# RFC 9112 §3.2: HTTP/1.0 does not need Host.
+law req_http10_no_host:
+  {Http.got_body(Http.parse("POST / HTTP/1.0\r\nContent-Length: 2\r\n\r\nhi")) == "hi" : String}
+
 # RFC 9110 §15: the reason phrase follows the status.
 law reason_404:
   {Http.response(404, Http.empty(), "") == "HTTP/1.1 404 Not Found\r\n\r\n" : String}

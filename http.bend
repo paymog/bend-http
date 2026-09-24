@@ -260,26 +260,6 @@ def parse_u32(s: String) -> Maybe<&2, U32>:
     case SCon{Chr{+c}, t}:
       parse_u32.go(t, parse_u32.add(0, c), Bool.not(parse_u32.digit(c)))
 
-
-
-def parse.take.if(+rest: String, +k: Nat, short: Bool) -> Maybe<&2, String>:
-  match short:
-    case True{}:
-      None{}
-    case False{}:
-      Some{String.take(rest, k)}
-
-# RFC 9112 §8: fewer bytes than Content-Length is an incomplete message.
-def parse.take.have(+rest: String, +k: Nat) -> Maybe<&2, String>:
-  parse.take.if(rest, k, Nat.is_lt(String.length(rest), k))
-
-def parse.take(rest: String, n: Maybe<&2, U32>) -> Maybe<&2, String>:
-  match n:
-    case None{}:
-      None{}
-    case Some{k}:
-      parse.take.have(rest, U32.to_nat(k))
-
 # A size line: still open, never a size, or a size plus the bytes after it.
 type Fit is Data:
   FitMore{}
@@ -579,106 +559,6 @@ def chunk.decode.hold(h: Hold) -> Maybe<&2, String>:
 def chunk.decode(+s: String) -> Maybe<&2, String>:
   chunk.decode.hold(chunk.live(s))
 
-def parse.body.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Maybe<&2, String>:
-  match hascl:
-    case False{}:
-      Some{""}
-    case True{}:
-      parse.take(rest, parse_u32(header(h, "content-length")))
-
-def parse.body.chunked.eq(rest: String, ok: Bool) -> Maybe<&2, String>:
-  match ok:
-    case False{}:
-      None{}
-    case True{}:
-      chunk.decode(rest)
-
-def parse.body.chunked.val(te: String, rest: String) -> Maybe<&2, String>:
-  parse.body.chunked.eq(rest, String.eq(String.to_lower(te), "chunked"))
-
-def parse.body.chunked(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Maybe<&2, String>:
-  match hascl:
-    case True{}:
-      None{}
-    case False{}:
-      parse.body.chunked.val(header.last(h, "transfer-encoding"), rest)
-
-def parse.body.te(+h: Map<&2, List<&2, String>>, rest: String, te: Bool) -> Maybe<&2, String>:
-  match te:
-    case True{}:
-      parse.body.chunked(h, rest, has_header(h, "content-length"))
-    case False{}:
-      parse.body.cl(h, rest, has_header(h, "content-length"))
-
-def parse.body(+h: Map<&2, List<&2, String>>, rest: String) -> Maybe<&2, String>:
-  parse.body.te(h, rest, has_header(h, "transfer-encoding"))
-
-def parse.finish(method: String, path: String, h: Map<&2, List<&2, String>>, body: Maybe<&2, String>) -> Maybe<&2, Req>:
-  match body:
-    case None{}:
-      None{}
-    case Some{b}:
-      Some{Req{method, path, h, b}}
-
-def parse.host(method: String, path: String, +h: Map<&2, List<&2, String>>, rest: String, has: Bool) -> Maybe<&2, Req>:
-  match has:
-    case False{}:
-      None{}
-    case True{}:
-      parse.finish(method, path, h, parse.body(h, rest))
-
-def parse.fields(method: String, path: String, rest: String, fs: Maybe<&2, Map<&2, List<&2, String>>>) -> Maybe<&2, Req>:
-  match fs:
-    case None{}:
-      None{}
-    case Some{+h}:
-      parse.host(method, path, h, rest, has_header(h, "host"))
-
-def target_ok(+p: String) -> Bool:
-  Bool.or(String.starts_with(p, "/"), Bool.or(String.eq(p, "*"), String.starts_with(p, "http://")))
-
-def parse.target(method: String, +path: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Req>:
-  match ok:
-    case False{}:
-      None{}
-    case True{}:
-      parse.fields(method, path, rest, parse.headers(headers, FieldsOk{empty()}))
-
-def parse.ver(method: String, +path: String, v: String, headers: List<&2, String>, rest: String, ok: Bool) -> Maybe<&2, Req>:
-  match ok:
-    case False{}:
-      None{}
-    case True{}:
-      parse.target(method, path, headers, rest, target_ok(path))
-
-def parse.empty_method(method: String, path: String, +v: String, headers: List<&2, String>, rest: String, empty: Bool) -> Maybe<&2, Req>:
-  match empty:
-    case True{}:
-      None{}
-    case False{}:
-      parse.ver(method, path, v, headers, rest, String.eq(v, "HTTP/1.1"))
-
-def parse.start3(mpv: String & String & String, headers: List<&2, String>, rest: String) -> Maybe<&2, Req>:
-  (+method, path, v) = mpv
-  parse.empty_method(method, path, v, headers, rest, String.is_empty(method))
-
-def parse.lines(xs: List<&2, String>, rest: String) -> Maybe<&2, Req>:
-  match xs:
-    case Nil{}:
-      None{}
-    case Con{line, headers}:
-      parse.start3(start_line(line), headers, rest)
-
-def parse.head(head: String, rest: String) -> Maybe<&2, Req>:
-  parse.lines(String.lines(head), rest)
-
-def parse.of(hb: String & String) -> Maybe<&2, Req>:
-  (head, rest) = hb
-  parse.head(head, rest)
-
-def parse(raw: String) -> Maybe<&2, Req>:
-  parse.of(split_at_blank(raw))
-
 def parse.res.cl.have(+rest: String, +k: Nat, short: Bool) -> Hold:
   match short:
     case True{}:
@@ -695,6 +575,135 @@ def parse.res.cl.n(rest: String, n: Maybe<&2, U32>) -> Hold:
       HoldBad{}
     case Some{k}:
       parse.res.cl.k(rest, U32.to_nat(k))
+
+def parse.body.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Hold:
+  match hascl:
+    case False{}:
+      HoldBody{""}
+    case True{}:
+      parse.res.cl.n(rest, parse_u32(header(h, "content-length")))
+
+# RFC 9112 §6.3 (4): a request coding other than chunked cannot be framed.
+def parse.body.chunked.eq(rest: String, ok: Bool) -> Hold:
+  match ok:
+    case False{}:
+      HoldBad{}
+    case True{}:
+      chunk.live(rest)
+
+def parse.body.chunked.val(te: String, rest: String) -> Hold:
+  parse.body.chunked.eq(rest, String.eq(String.to_lower(te), "chunked"))
+
+def parse.body.chunked(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Hold:
+  match hascl:
+    case True{}:
+      HoldBad{}
+    case False{}:
+      parse.body.chunked.val(header.last(h, "transfer-encoding"), rest)
+
+def parse.body.te(+h: Map<&2, List<&2, String>>, rest: String, te: Bool) -> Hold:
+  match te:
+    case True{}:
+      parse.body.chunked(h, rest, has_header(h, "content-length"))
+    case False{}:
+      parse.body.cl(h, rest, has_header(h, "content-length"))
+
+def parse.body(+h: Map<&2, List<&2, String>>, rest: String) -> Hold:
+  parse.body.te(h, rest, has_header(h, "transfer-encoding"))
+
+# Bad: never a request. More: a valid prefix; read on. Whole: a request.
+type Got is Data:
+  GotBad{}
+  GotMore{}
+  GotReq{req: Req}
+
+def parse.finish(method: String, path: String, h: Map<&2, List<&2, String>>, body: Hold) -> Got:
+  match body:
+    case HoldBad{}:
+      GotBad{}
+    case HoldMore{}:
+      GotMore{}
+    case HoldUntil{b}:
+      GotBad{}
+    case HoldBody{b}:
+      GotReq{Req{method, path, h, b}}
+
+def parse.host(method: String, path: String, +h: Map<&2, List<&2, String>>, rest: String, has: Bool) -> Got:
+  match has:
+    case False{}:
+      GotBad{}
+    case True{}:
+      parse.finish(method, path, h, parse.body(h, rest))
+
+# RFC 9112 §3.2: only HTTP/1.1 requires Host.
+def parse.fields(method: String, path: String, rest: String, v11: Bool, fs: Maybe<&2, Map<&2, List<&2, String>>>) -> Got:
+  match fs:
+    case None{}:
+      GotBad{}
+    case Some{+h}:
+      parse.host(method, path, h, rest, Bool.or(Bool.not(v11), has_header(h, "host")))
+
+def target_ok(+p: String) -> Bool:
+  Bool.or(String.starts_with(p, "/"), Bool.or(String.eq(p, "*"), String.starts_with(p, "http://")))
+
+def parse.target(method: String, +path: String, headers: List<&2, String>, rest: String, v11: Bool, ok: Bool) -> Got:
+  match ok:
+    case False{}:
+      GotBad{}
+    case True{}:
+      parse.fields(method, path, rest, v11, parse.headers(headers, FieldsOk{empty()}))
+
+def parse.ver(method: String, +path: String, +v: String, headers: List<&2, String>, rest: String, ok: Bool) -> Got:
+  match ok:
+    case False{}:
+      GotBad{}
+    case True{}:
+      parse.target(method, path, headers, rest, String.eq(v, "HTTP/1.1"), target_ok(path))
+
+def parse.empty_method(method: String, path: String, +v: String, headers: List<&2, String>, rest: String, empty: Bool) -> Got:
+  match empty:
+    case True{}:
+      GotBad{}
+    case False{}:
+      parse.ver(method, path, v, headers, rest, Bool.or(String.eq(v, "HTTP/1.1"), String.eq(v, "HTTP/1.0")))
+
+def parse.start3(mpv: String & String & String, headers: List<&2, String>, rest: String) -> Got:
+  (+method, path, v) = mpv
+  parse.empty_method(method, path, v, headers, rest, String.is_empty(method))
+
+def parse.lines(xs: List<&2, String>, rest: String) -> Got:
+  match xs:
+    case Nil{}:
+      GotBad{}
+    case Con{line, headers}:
+      parse.start3(start_line(line), headers, rest)
+
+def parse.head(+head: String, rest: String, whole: Bool) -> Got:
+  match whole:
+    case False{}:
+      GotMore{}
+    case True{}:
+      parse.lines(String.lines(head), rest)
+
+def parse.of(hb: String & String) -> Got:
+  (+head, rest) = hb
+  parse.head(head, rest, String.ends_with(head, "\r\n\r\n"))
+
+# serve reads until this is not GotMore.
+def parse.got(raw: String) -> Got:
+  parse.of(split_at_blank(raw))
+
+def parse.req(g: Got) -> Maybe<&2, Req>:
+  match g:
+    case GotReq{req}:
+      Some{req}
+    case GotBad{}:
+      None{}
+    case GotMore{}:
+      None{}
+
+def parse(raw: String) -> Maybe<&2, Req>:
+  parse.req(parse.got(raw))
 
 def parse.res.cl(+h: Map<&2, List<&2, String>>, rest: String, hascl: Bool) -> Hold:
   match hascl:
@@ -1656,44 +1665,87 @@ def sent_fin(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
   (s, r) = m
   Socket.close(s)
 
-def reply_send(s: Socket, res: Res) -> IO(Unit):
+# serve closes after each response, so it says so.
+def reply_send(s: Socket, +head: Bool, res: Res) -> IO(Unit):
+  Res{status, headers, body} = res
   do IO<Unit>:
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode(res))
+    sent : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send(s, encode.on(Res{status, set(headers, "connection", "close"), body}, head))
     sent_fin(sent)
 
+def reply_fail(s: Socket, +status: U32) -> IO(Unit):
+  reply_send(s, False{}, Res{status, empty(), reason(status)})
+
 def reply_handle(~h: Req -> IO(Res), s: Socket, req: Req) -> IO(Unit):
+  Req{+method, path, headers, body} = req
   do IO<Unit>:
-    res : Res <- h(req)
-    reply_send(s, res)
+    res : Res <- h(Req{method, path, headers, body})
+    reply_send(s, String.eq(method, "HEAD"), res)
 
-def reply_parsed(~h: Req -> IO(Res), s: Socket, m: Maybe<&2, Req>) -> IO(Unit):
-  match m:
-    case None{}:
-      reply_send(s, Res{400, empty(), "bad"})
-    case Some{req}:
-      reply_handle(~h, s, req)
+# What serve does after a read: close, refuse, handle, or read on.
+type Turn is Data:
+  TurnClose{}
+  TurnFail{status: U32}
+  TurnReq{req: Req}
+  TurnMore{buf: String}
 
-def reply_ok(~h: Req -> IO(Res), s: Socket, raw: String) -> IO(Unit):
-  reply_parsed(~h, s, parse(raw))
+def talk.got(g: Got, buf: String) -> Turn:
+  match g:
+    case GotBad{}:
+      TurnFail{400}
+    case GotMore{}:
+      TurnMore{buf}
+    case GotReq{req}:
+      TurnReq{req}
 
-def reply(~h: Req -> IO(Res), m: Socket & Result<&1, &1, U32 & String, String>) -> IO(Unit):
+# ponytail: 1 MiB, nginx's default; re-framing is O(n²), so a bigger cap needs incremental framing.
+def serve.max() -> Nat:
+  U32.to_nat(1048576)
+
+def talk.size(+buf: String, big: Bool) -> Turn:
+  match big:
+    case True{}:
+      TurnFail{413}
+    case False{}:
+      talk.got(parse.got(buf), buf)
+
+# An empty recv means the client closed before a whole request.
+def talk.closed(buf: String, +got: String, closed: Bool) -> Turn:
+  match closed:
+    case True{}:
+      TurnClose{}
+    case False{}:
+      +buf2 = {buf ++ got : String}
+      talk.size(buf2, Nat.is_lt(serve.max(), String.length(buf2)))
+
+def talk.next(buf: String, m: Socket & Result<&1, &1, U32 & String, String>) -> Socket & Turn:
   (s, r) = m
   match r:
-    case Done{raw}:
-      reply_ok(~h, s, raw)
     case Fail{e}:
-      Socket.close(s)
+      (s, TurnClose{})
+    case Done{+got}:
+      (s, talk.closed(buf, got, String.is_empty(got)))
 
-def talk(~h: Req -> IO(Res), s: Socket) -> IO(Unit):
-  do IO<Unit>:
-    read : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 8192, 30000)
-    reply(~h, read)
+# ponytail: one request per connection; add keep-alive when a client needs it.
+@unsafe
+def talk(~h: Req -> IO(Res), st: Socket & Turn) -> IO(Unit):
+  (s, t) = st
+  match t:
+    case TurnMore{buf}:
+      do IO<Unit>:
+        m : Socket & Result<&1, &1, U32 & String, String> <- Wire.recv(s, 65536, 30000)
+        talk(~h, talk.next(buf, m))
+    case TurnReq{req}:
+      reply_handle(h, s, req)
+    case TurnFail{status}:
+      reply_fail(s, status)
+    case TurnClose{}:
+      Socket.close(s)
 
 def conn(~h: Req -> IO(Res), m: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Listener):
   (l, r) = m
   do IO<Listener>:
     s : Socket <- IO.pass(Socket, r)
-    IO.spawn(Unit, talk(~h, s))
+    IO.spawn(Unit, talk(~h, (s, TurnMore{""})))
     return l
 
 @unsafe
