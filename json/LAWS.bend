@@ -20,6 +20,21 @@ law parse_empty_arr:
 law parse_empty_obj:
   {Json.parse("{}") == Some{Json.Obj{Map.new(&2, Json.Val)}} : Maybe<&2, Json.Val>}
 
+law at_index:
+  {Json.at(Json.Arr{[Json.Str{"a"}, Json.Str{"b"}]}, 1n) == Some{Json.Str{"b"}} : Maybe<&2, Json.Val>}
+
+law at_object_none:
+  {Json.at(Json.Null{}, 0n) == None{} : Maybe<&2, Json.Val>}
+
+law u32_twelve:
+  {Json.u32(Json.Num{"12"}) == Some{12} : Maybe<&2, U32>}
+
+law u32_fraction_none:
+  {Json.u32(Json.Num{"1.5"}) == None{} : Maybe<&2, U32>}
+
+law u32_overflow_none:
+  {Json.u32(Json.Num{"4294967296"}) == None{} : Maybe<&2, U32>}
+
 # §2: one value per text.
 law trailing_junk:
   {Json.parse("null x") == None{} : Maybe<&2, Json.Val>}

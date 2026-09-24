@@ -505,3 +505,80 @@ def enc.go(items: List<&2, Item>, racc: String) -> String:
 # Compact JSON; object keys come out sorted.
 def encode(v: Val) -> String:
   enc.go(Con{IVal{v}, Nil{}}, "")
+
+def at.go(xs: List<&2, Val>, n: Nat) -> Maybe<&2, Val>:
+  match xs:
+    case Nil{}:
+      None{}
+    case Con{v, t}:
+      match n:
+        case 0n:
+          Some{v}
+        case 1n+p:
+          at.go(t, p)
+
+
+def at(v: Val, n: Nat) -> Maybe<&2, Val>:
+  match v:
+    case Arr{xs}:
+      at.go(xs, n)
+    case Null{}:
+      None{}
+    case Flag{on}:
+      None{}
+    case Num{s}:
+      None{}
+    case Str{s}:
+      None{}
+    case Obj{m}:
+      None{}
+
+def u32.over(+acc: U32, +c: U32) -> Bool:
+  Bool.or(U32.is_lt(429496729, acc), Bool.and(U32.is_eq(acc, 429496729), U32.is_lt(53, c)))
+
+def u32.dig(s: String, +acc: U32, bad: Bool) -> Maybe<&2, U32>:
+  match s:
+    case SNil{}:
+      match bad:
+        case True{}:
+          None{}
+        case False{}:
+          Some{acc}
+    case SCon{Chr{+c}, t}:
+      u32.dig(t, (acc * 10 + (c - 48 : U32) : U32), Bool.or(bad, Bool.or(Bool.not(digit(c)), u32.over(acc, c))))
+
+def u32.zero(t: String) -> Maybe<&2, U32>:
+  match t:
+    case SNil{}:
+      Some{0}
+    case SCon{d, u}:
+      None{}
+
+def u32.lead(+c: U32, t: String, zero: Bool) -> Maybe<&2, U32>:
+  match zero:
+    case True{}:
+      u32.zero(t)
+    case False{}:
+      u32.dig(t, (c - 48 : U32), Bool.or(Bool.not(digit(c)), u32.over(0, c)))
+
+def u32.num(s: String) -> Maybe<&2, U32>:
+  match s:
+    case SNil{}:
+      None{}
+    case SCon{Chr{+c}, t}:
+      u32.lead(c, t, U32.is_eq(c, 48))
+
+def u32(v: Val) -> Maybe<&2, U32>:
+  match v:
+    case Num{s}:
+      u32.num(s)
+    case Null{}:
+      None{}
+    case Flag{on}:
+      None{}
+    case Str{s}:
+      None{}
+    case Arr{xs}:
+      None{}
+    case Obj{m}:
+      None{}

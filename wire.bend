@@ -44,7 +44,7 @@ def tls.send(sock: Socket, data: String) ->
   import "./effs/wire.c"
   import "./effs/wire.js"
 
-# "" once the peer has closed.
+# "" once the peer sends close_notify. A bare EOF is an error.
 def tls.recv(sock: Socket, max: U32, ms: U32) ->
   IO(Socket & Result<&1, &1, U32 & String, String>):
   import "./effs/wire.c"

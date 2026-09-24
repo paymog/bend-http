@@ -277,19 +277,34 @@ def answer(id: U32, msg: String) -> Maybe<&2, String>:
 # resolv.conf
 # -----------
 
-def nameserver.line(+line: String, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  Bool.pick(Maybe<&2, String>, String.starts_with(line, "nameserver"), Some{String.trim(String.drop(line, 10n))}, rest)
+def nameservers.add(+line: String, rest: List<&2, String>, hit: Bool) -> List<&2, String>:
+  match hit:
+    case False{}:
+      rest
+    case True{}:
+      Con{String.trim(String.drop(line, 10n)), rest}
 
-def nameserver.go(xs: List<&2, String>) -> Maybe<&2, String>:
+def nameservers.go(xs: List<&2, String>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{+line, t}:
+      nameservers.add(line, nameservers.go(t), String.starts_with(line, "nameserver"))
+
+# Every nameserver line, in file order.
+def nameservers(conf: String) -> List<&2, String>:
+  nameservers.go(String.lines(conf))
+
+def nameserver.first(xs: List<&2, String>) -> Maybe<&2, String>:
   match xs:
     case Nil{}:
       None{}
-    case Con{line, t}:
-      nameserver.line(line, nameserver.go(t))
+    case Con{n, t}:
+      Some{n}
 
 # The first nameserver line of a resolv.conf.
 def nameserver(conf: String) -> Maybe<&2, String>:
-  nameserver.go(String.lines(conf))
+  nameserver.first(nameservers(conf))
 
 # Resolve
 # -------
@@ -407,6 +422,10 @@ def resolve.ns(name: String, ns: Maybe<&2, String>) -> IO(Maybe<&2, String>):
         r : Result<&1, &1, U32 & String, U32> <- IO.random_u32()
         resolve.id(name, n, r)
 
+# Ask one nameserver. Tests use this; resolve reads /etc/resolv.conf.
+def resolve.at(+host: String, ns: String) -> IO(Maybe<&2, String>):
+  resolve.ns(host, Some{ns})
+
 def conf.text(r: Result<&1, &1, U32 & String, String>) -> String:
   match r:
     case Fail{e}:
@@ -414,11 +433,51 @@ def conf.text(r: Result<&1, &1, U32 & String, String>) -> String:
     case Done{s}:
       s
 
+# ponytail: 3 nameservers; a longer resolv.conf ignores the rest
+def resolve.3(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
+  match xs:
+    case Nil{}:
+      none()
+    case Con{+ns, t}:
+      resolve.at(name, ns)
+
+def resolve.2b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+  match ip:
+    case Some{s}:
+      IO.pure(Maybe<&2, String>, Some{s})
+    case None{}:
+      resolve.3(name, rest)
+
+def resolve.2(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
+  match xs:
+    case Nil{}:
+      none()
+    case Con{+ns, t}:
+      do IO<Maybe<&2, String>>:
+        ip : Maybe<&2, String> <- resolve.at(name, ns)
+        resolve.2b(name, t, ip)
+
+def resolve.1b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+  match ip:
+    case Some{s}:
+      IO.pure(Maybe<&2, String>, Some{s})
+    case None{}:
+      resolve.2(name, rest)
+
+def resolve.list(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
+  match xs:
+    case Nil{}:
+      none()
+    case Con{+ns, t}:
+      do IO<Maybe<&2, String>>:
+        ip : Maybe<&2, String> <- resolve.at(name, ns)
+        resolve.1b(name, t, ip)
+
 def resolve.read(name: String, m: File & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, String>):
   (f, r) = m
   do IO<Maybe<&2, String>>:
     File.close(f)
-    resolve.ns(name, nameserver(conf.text(r)))
+    resolve.list(name, nameservers(conf.text(r)))
 
 def resolve.conf(name: String, r: Result<&1, &1, U32 & String, File>) -> IO(Maybe<&2, String>):
   match r:
@@ -434,7 +493,102 @@ def resolve.dns(name: String) -> IO(Maybe<&2, String>):
     f : Result<&1, &1, U32 & String, File> <- File.open("/etc/resolv.conf", "r")
     resolve.conf(name, f)
 
-# An IPv4 address for host: literals as is, localhost (RFC 6761), else DNS.
-# ponytail: no /etc/hosts, no AAAA, no TCP retry on TC
+
+def hosts.pick(found: Maybe<&2, String>, now: Maybe<&2, String>) -> Maybe<&2, String>:
+  match found:
+    case Some{s}:
+      Some{s}
+    case None{}:
+      now
+
+def hosts.hit(+ip: String, hit: Bool) -> Maybe<&2, String>:
+  match hit:
+    case True{}:
+      Some{ip}
+    case False{}:
+      None{}
+
+def hosts.names(xs: List<&2, String>, +name: String, +ip: String, found: Maybe<&2, String>) -> Maybe<&2, String>:
+  match xs:
+    case Nil{}:
+      found
+    case Con{+n, t}:
+      hosts.names(t, name, ip, hosts.pick(found, hosts.hit(ip, String.eq(String.to_lower(n), name))))
+
+def hosts.ip(+name: String, +ip: String, ns: List<&2, String>, ok: Bool) -> Maybe<&2, String>:
+  match ok:
+    case False{}:
+      None{}
+    case True{}:
+      hosts.names(ns, name, ip, None{})
+
+def hosts.line(+name: String, xs: List<&2, String>) -> Maybe<&2, String>:
+  match xs:
+    case Nil{}:
+      None{}
+    case Con{+ip, ns}:
+      hosts.ip(name, ip, ns, ipv4(ip))
+
+def hosts.sp(+c: U32, tab: Bool) -> U32:
+  match tab:
+    case True{}:
+      32
+    case False{}:
+      c
+
+def hosts.flat(s: String) -> String:
+  match s:
+    case SNil{}:
+      ""
+    case SCon{Chr{+c}, t}:
+      SCon{Chr{hosts.sp(c, U32.is_eq(c, 9))}, hosts.flat(t)}
+
+def hosts.scan(xs: List<&2, String>, +name: String, found: Maybe<&2, String>) -> Maybe<&2, String>:
+  match xs:
+    case Nil{}:
+      found
+    case Con{line, t}:
+      hosts.scan(t, name, hosts.pick(found, hosts.line(name, String.split(hosts.flat(line), ' '))))
+
+# First IPv4 address for name in an /etc/hosts file. The name is already lowercase.
+def hosts(+name: String, text: String) -> Maybe<&2, String>:
+  hosts.scan(String.lines(text), name, None{})
+
+def resolve.from(+name: String, m: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+  match m:
+    case Some{ip}:
+      IO.pure(Maybe<&2, String>, Some{ip})
+    case None{}:
+      resolve.dns(name)
+
+def resolve.text(+name: String, r: Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, String>):
+  match r:
+    case Fail{e}:
+      resolve.dns(name)
+    case Done{s}:
+      resolve.from(name, hosts(name, s))
+
+def resolve.opened(+name: String, m: File & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, String>):
+  (f, r) = m
+  do IO<Maybe<&2, String>>:
+    File.close(f)
+    resolve.text(name, r)
+
+def resolve.hosts(+name: String, r: Result<&1, &1, U32 & String, File>) -> IO(Maybe<&2, String>):
+  match r:
+    case Fail{e}:
+      resolve.dns(name)
+    case Done{f}:
+      do IO<Maybe<&2, String>>:
+        m : File & Result<&1, &1, U32 & String, String> <- File.read(f, 65536)
+        resolve.opened(name, m)
+
+# An IPv4 address for host: literals as is, localhost (RFC 6761), /etc/hosts, else DNS.
+# ponytail: no AAAA, no TCP retry on TC
+def resolve.ask(+name: String) -> IO(Maybe<&2, String>):
+  do IO<Maybe<&2, String>>:
+    f : Result<&1, &1, U32 & String, File> <- File.open("/etc/hosts", "r")
+    resolve.hosts(name, f)
+
 def resolve(+host: String) -> IO(Maybe<&2, String>):
-  Bool.pick(IO(Maybe<&2, String>), ipv4(host), IO.pure(Maybe<&2, String>, Some{host}), Bool.pick(IO(Maybe<&2, String>), String.eq(host, "localhost"), IO.pure(Maybe<&2, String>, Some{"127.0.0.1"}), resolve.dns(host)))
+  Bool.pick(IO(Maybe<&2, String>), ipv4(host), IO.pure(Maybe<&2, String>, Some{host}), Bool.pick(IO(Maybe<&2, String>), String.eq(host, "localhost"), IO.pure(Maybe<&2, String>, Some{"127.0.0.1"}), resolve.ask(String.to_lower(host))))

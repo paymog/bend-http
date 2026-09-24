@@ -322,7 +322,6 @@ static bool wire_tls_load(void) {
   int   (*paths)(void*)                 = dlsym(h, "SSL_CTX_set_default_verify_paths");
   void  (*verify)(void*, int, void*)    = dlsym(h, "SSL_CTX_set_verify");
   long  (*ctx_ctrl)(void*, int, long, void*) = dlsym(h, "SSL_CTX_ctrl");
-  uint64_t (*options)(void*, uint64_t)  = dlsym(h, "SSL_CTX_set_options");
   wire_tls.ssl_new       = dlsym(h, "SSL_new");
   wire_tls.set_fd        = dlsym(h, "SSL_set_fd");
   wire_tls.ctrl          = dlsym(h, "SSL_ctrl");
@@ -335,7 +334,7 @@ static bool wire_tls_load(void) {
   wire_tls.ssl_free      = dlsym(h, "SSL_free");
   wire_tls.verify_result = dlsym(h, "SSL_get_verify_result");
   wire_tls.verify_text   = dlsym(h, "X509_verify_cert_error_string");
-  if (!method || !ctx_new || !paths || !verify || !ctx_ctrl || !options
+  if (!method || !ctx_new || !paths || !verify || !ctx_ctrl
     || !wire_tls.ssl_new || !wire_tls.set_fd || !wire_tls.ctrl
     || !wire_tls.set1_host || !wire_tls.connect || !wire_tls.read
     || !wire_tls.write || !wire_tls.get_error || !wire_tls.shutdown
@@ -348,7 +347,7 @@ static bool wire_tls_load(void) {
   }
   verify(ctx, 1, NULL);              // SSL_VERIFY_PEER
   ctx_ctrl(ctx, 123, 0x0303, NULL);  // SSL_CTRL_SET_MIN_PROTO_VERSION, TLS 1.2
-  options(ctx, 1ull << 7);           // SSL_OP_IGNORE_UNEXPECTED_EOF: a bare EOF reads as close
+  // A bare EOF is an error. close_notify is the only clean close.
   wire_tls.ctx   = ctx;
   wire_tls.state = 1;
   return true;
@@ -476,7 +475,7 @@ static void __attribute__((constructor)) tls_send_use(void) {
 
 #ifdef CID_TLS_RECV
 
-// "" means the peer closed (close_notify, or a bare EOF).
+// "" means close_notify. A bare EOF is a read error, not a clean close.
 static Term wire_tls_recv_more(Env e, IoWork* w) {
   int   fd  = (int)w->hand;
   void* ssl = wire_tls_of(fd);

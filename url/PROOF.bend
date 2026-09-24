@@ -11,6 +11,9 @@ def Laws.path_root():
 def Laws.encode_root():
   {==}
 
+def Laws.form_space():
+  {==}
+
 def Laws.pct_space():
   {==}
 

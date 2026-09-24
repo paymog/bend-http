@@ -183,10 +183,105 @@ def Laws.frame_304():
 def Laws.frame_bad_status():
   {==}
 
+def Laws.frame_chunk_bad_size():
+  {==}
+
+def Laws.frame_chunk_bad_data():
+  {==}
+
+def Laws.frame_chunk_bare_lf():
+  {==}
+
+def Laws.frame_chunk_size_more():
+  {==}
+
+def Laws.frame_cl_and_te():
+  {==}
+
+def Laws.frame_bad_length():
+  {==}
+
+def Laws.frame_te_gzip_more():
+  {==}
+
+def Laws.frame_te_gzip_close():
+  {==}
+
+def Laws.fetch_bad_chunk_now():
+  {==}
+
+def Laws.fetch_short_chunk_more():
+  {==}
+
+def Laws.text_utf8():
+  {==}
+
+def Laws.json_flag():
+  {==}
+
+def Laws.frame_100_waits():
+  {==}
+
+def Laws.frame_100_cut():
+  {==}
+
+def Laws.frame_100_then_ok():
+  {==}
+
+def Laws.frame_103_then_ok():
+  {==}
+
+def Laws.frame_101_final():
+  {==}
+
+def Laws.frame_interim_cap():
+  {==}
+
+def Laws.frame_interim_eight():
+  {==}
+
+
+def Laws.need_te_gzip():
+  {==}
+
+def Laws.after_cl():
+  {==}
+
+def Laws.after_chunk():
+  {==}
+
+def Laws.after_close_none():
+  {==}
+
+def Laws.after_204():
+  {==}
 def Laws.req_get():
   {==}
 
+def Laws.req_keep():
+  {==}
+def Laws.again_keep():
+  {==}
+
+def Laws.again_asked_close():
+  {==}
+
+def Laws.again_peer_close():
+  {==}
+
+def Laws.again_until_close():
+  {==}
+
 def Laws.req_post_guarded():
+  {==}
+
+def Laws.policy_manual():
+  {==}
+
+def Laws.policy_error():
+  {==}
+
+def Laws.policy_error_ok():
   {==}
 
 def Laws.req_roundtrip():

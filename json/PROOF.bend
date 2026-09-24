@@ -17,6 +17,21 @@ def Laws.parse_empty_arr():
 def Laws.parse_empty_obj():
   {==}
 
+def Laws.at_index():
+  {==}
+
+def Laws.at_object_none():
+  {==}
+
+def Laws.u32_twelve():
+  {==}
+
+def Laws.u32_fraction_none():
+  {==}
+
+def Laws.u32_overflow_none():
+  {==}
+
 def Laws.trailing_junk():
   {==}
 

@@ -1,6 +1,7 @@
 import Base
 import ./http.bend as Http
 import ./url/url.bend as Url
+import ./json/json.bend as Json
 
 # LAW: the text after a blank line is the body.
 law body_after_blank:
@@ -173,6 +174,104 @@ law frame_304:
 law frame_bad_status:
   {Http.frame("HTTP/1.1 abc OK\r\n\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
 
+# A bad chunk is never a message, even while the connection is open.
+law frame_chunk_bad_size:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nG\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law frame_chunk_bad_data:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nokXX", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law frame_chunk_bare_lf:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+# A size line that has not ended can still become a chunk.
+law frame_chunk_size_more:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+# RFC 9112 §6.3: both Content-Length and Transfer-Encoding is an error.
+law frame_cl_and_te:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 1\r\nTransfer-Encoding: chunked\r\n\r\nZ", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law frame_bad_length:
+  {Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5abc\r\n\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+# RFC 9112 §6.3: a transfer coding other than chunked is read until close.
+law frame_te_gzip_more:
+  {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_te_gzip_close:
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{})) == Some{"abc"} : Maybe<&2, String>}
+
+# The read loop frames a bad chunk even when the gate is shut.
+law fetch_bad_chunk_now:
+  {Http.fetch.try(False{}, Http.NeedChunk{}, String.reverse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\nG\r\n"), False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law text_utf8:
+  {Http.text(Http.Res{200, Http.empty(), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}}) == "é" : String}
+
+law json_flag:
+  {Http.json(Http.Res{200, Http.empty(), "true"}) == Some{Json.Flag{True{}}} : Maybe<&2, Json.Val>}
+
+
+law req_keep:
+  {Http.encode_req.on("GET", "/x", "h", Http.empty(), "", False{}) == "GET /x HTTP/1.1\r\nconnection: keep-alive\r\nhost: h\r\n\r\n" : String}
+
+law again_keep:
+  {Http.again(False{}, Http.empty(), Some{"x"}) == True{} : Bool}
+
+law again_asked_close:
+  {Http.again(True{}, Http.empty(), Some{"x"}) == False{} : Bool}
+
+law again_peer_close:
+  {Http.again(False{}, Http.set(Http.empty(), "connection", "Close"), Some{"x"}) == False{} : Bool}
+
+law again_until_close:
+  {Http.again(False{}, Http.empty(), None{}) == False{} : Bool}
+
+def sample_hop() -> Http.Hop:
+  Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/"}, Http.empty(), ""}
+
+law policy_manual:
+  {Http.fetch.policy(Http.ModeManual{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}) == Http.NDone{Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}} : Http.Next}
+
+law policy_error:
+  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}) == Http.NDone{Fail{Http.ErrRedirect{}}} : Http.Next}
+
+law policy_error_ok:
+  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{200, Http.empty(), ""}}) == Http.NDone{Done{Http.Res{200, Http.empty(), ""}}} : Http.Next}
+law fetch_short_chunk_more:
+  {Http.fetch.try(False{}, Http.NeedChunk{}, String.reverse("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel"), False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+def hints(n: Nat) -> String:
+  match n:
+    case 0n:
+      ""
+    case 1n+p:
+      "HTTP/1.1 100 Continue\r\n\r\n" ++ hints(p)
+
+# RFC 9110 §15.2: 100 and 103 are not the final response.
+law frame_100_waits:
+  {Http.frame("HTTP/1.1 100 Continue\r\n\r\n", False{}, False{}) == Http.FrameMore{} : Http.Frame}
+
+law frame_100_cut:
+  {Http.frame("HTTP/1.1 100 Continue\r\n\r\n", True{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law frame_100_then_ok:
+  {body_of(Http.frame("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+
+law frame_103_then_ok:
+  {body_of(Http.frame("HTTP/1.1 103 Early Hints\r\nLink: </a>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+
+# 101 switches the protocol; nothing follows.
+law frame_101_final:
+  {body_of(Http.frame("HTTP/1.1 101 Switching Protocols\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+
+law frame_interim_cap:
+  {Http.frame(hints(9n), False{}, False{}) == Http.FrameBad{} : Http.Frame}
+
+law frame_interim_eight:
+  {body_of(Http.frame(hints(8n) ++ "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nZ", False{}, False{})) == Some{"Z"} : Maybe<&2, String>}
+
 # RFC 9110 §8.6: a bodiless GET carries no Content-Length.
 law req_get:
   {Http.encode_req("GET", "/x", "h", Http.empty(), "") == "GET /x HTTP/1.1\r\nconnection: close\r\nhost: h\r\n\r\n" : String}
@@ -253,6 +352,21 @@ law need_cl_te:
 
 law need_bad_status:
   {Http.need("HTTP/1.1 abc\r\n\r\n", False{}) == Http.NeedNow{} : Http.Need}
+
+law need_te_gzip:
+  {Http.need("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", False{}) == Http.NeedClose{} : Http.Need}
+
+law after_cl:
+  {Http.after("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
+
+law after_chunk:
+  {Http.after("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nok\r\n0\r\n\r\nNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
+
+law after_close_none:
+  {Http.after("HTTP/1.1 200 OK\r\n\r\nhello", False{}) == None{} : Maybe<&2, String>}
+
+law after_204:
+  {Http.after("HTTP/1.1 204 No Content\r\n\r\nNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
 
 # The gate opens once Content-Length bytes are in, never before.
 law gate_len_reached:
