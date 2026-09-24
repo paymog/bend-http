@@ -466,3 +466,44 @@ law encode_204_nobody:
 # RFC 9110 §9.3.2: HEAD gets the length but not the body.
 law encode_head:
   {Http.encode.on(Http.Res{200, Http.empty(), "hi"}, True{}) == "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n" : String}
+
+
+# RFC 9112 §9.3: an HTTP/1.1 request without close keeps the connection.
+law serve_keep_v11:
+  {Http.serve.keep(Http.empty(), True{}, 200, Http.empty()) == True{} : Bool}
+
+# RFC 9112 §9.3: a request that says close ends the connection.
+law serve_keep_close:
+  {Http.serve.keep(Http.set(Http.empty(), "connection", "close"), True{}, 200, Http.empty()) == False{} : Bool}
+
+# HTTP/1.0 may close after each response.
+law serve_keep_http10:
+  {Http.serve.keep(Http.empty(), False{}, 200, Http.empty()) == False{} : Bool}
+
+# Request Content-Length determines the full message size before its body arrives.
+law req_need_content_length:
+  {Http.req.need("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\n") == Http.NeedLen{49n} : Http.Need}
+
+# A complete Content-Length request leaves the next request untouched.
+law req_after_content_length:
+  {Http.req.after("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 2\r\n\r\nhiGET / HTTP/1.1\r\nHost: x\r\n\r\n") == Some{"GET / HTTP/1.1\r\nHost: x\r\n\r\n"} : Maybe<&2, String>}
+
+# A complete chunked request leaves the next request untouched.
+law req_after_chunked:
+  {Http.req.after("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n0\r\n\r\nGET / HTTP/1.1\r\nHost: x\r\n\r\n") == Some{"GET / HTTP/1.1\r\nHost: x\r\n\r\n"} : Maybe<&2, String>}
+
+# A complete request is never skipped by the framing hint.
+law req_hint_complete:
+  {Http.serve.try(True{}, Http.req.need("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), String.reverse("GET / HTTP/1.1\r\nHost: x\r\n\r\n"), False{}) == Http.parse.got("GET / HTTP/1.1\r\nHost: x\r\n\r\n") : Http.Got}
+
+# A chunked body fed in two pieces decodes as if it came at once.
+law chunk_feed_split:
+  {Http.chunk.hold(Http.serve.dc.more("lo\r\n0\r\n\r\n", Http.dc.feed("5\r\nhel", Http.dc.start(), ""))) == Http.HoldBody{"hello"} : Http.Hold}
+
+# A split inside the size line or the final CRLF CRLF still decodes.
+law chunk_feed_split_size:
+  {Http.chunk.hold(Http.serve.dc.more("\r\nabc\r\n0\r\n\r", Http.dc.feed("3", Http.dc.start(), ""))) == Http.HoldMore{} : Http.Hold}
+
+# Bytes after the last chunk and trailer belong to the next request.
+law chunk_suffix_pipelined:
+  {Http.chunk.suffix("1\r\na\r\n0\r\nT: 1\r\n\r\nGET") == Some{"GET"} : Maybe<&2, String>}
