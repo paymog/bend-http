@@ -17,6 +17,14 @@ Bend looks like Python but acts like Haskell or Lean, with Rust-style resource r
 - **Literals.** `42` is `U32`, `3n` is `Nat`, `'c'` is `Char`, `"s"` is `String`. A `String` is a list of `Char`: `SCon{Chr{c}, t}` / `SNil{}`. Lists are `Con{h, t}` / `Nil{}`, and `[a, b]` or `h <> t`.
 - **Modules.** `import ./url/url.bend as Url` makes `Url.x` name each def in that file. A registry package imports by content hash: `import 0x<hash>/http.bend as Http`.
 
+## Bend bugs
+
+Bend is young, so the compiler, checker, runtime, or guide can be wrong. Before you call something a bug, rule out your own misreading: reread `bend guide`, run `bend update`, and cut the problem down to the smallest file that still shows it. When it is a genuine bug, report it at [bendlang/bend](https://github.com/bendlang/bend/issues). The old HigherOrderCO/Bend2 repo is archived.
+
+1. Search open and closed issues first: `gh issue list -R bendlang/bend --state all --search "<keywords>"`. Try a few phrasings, including the error text. If an issue already covers it, add your reproduction as a comment rather than opening a new one.
+2. Otherwise open one with `gh issue create -R bendlang/bend`. Include the Bend version (`bend version`), the OS and architecture, the minimal file, the command you ran, and the expected and actual output.
+3. Work around the bug in this repo, and put a comment next to the workaround that links the issue, so it can be removed once the fix ships.
+
 ## Laws and proofs
 
 A law is a claim; a proof is a def with the same name. Each package has:
