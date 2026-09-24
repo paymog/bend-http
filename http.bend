@@ -1467,16 +1467,18 @@ def fetch.next(head: Bool, rd: Rd, m: Socket & Result<&1, &1, U32 & String, Stri
   (s, r) = m
   fetch.next.go(head, s, rd, r)
 
-type Out is Data:
-  OutDone{res: Res, again: Bool, rest: String}
-  OutFail{e: Err}
+# none: no response byte arrived, so an idempotent request may be retried (RFC 9112 §9.3.1).
+# sock: the socket, when it can take another request.
+type Out is Type:
+  OutDone{res: Res, sock: Maybe<&1, Socket>, rest: String}
+  OutFail{e: Err, none: Bool}
 
-def fetch.boxed(r: Result<&2, &2, Err, Res>) -> Out:
+def fetch.boxed(r: Result<&2, &2, Err, Res>, none: Bool) -> Out:
   match r:
     case Done{res}:
-      OutDone{res, False{}, ""}
+      OutDone{res, None{}, ""}
     case Fail{e}:
-      OutFail{e}
+      OutFail{e, none}
 
 def fetch.bad(tls: Bool, s: Socket, e: Maybe<&2, Err>) -> IO(Result<&2, &2, Err, Res>):
   match e:
@@ -1492,154 +1494,259 @@ def fetch.rest(m: Maybe<&2, String>) -> String:
     case Some{s}:
       s
 
-def fetch.shut(tls: Bool, s: Socket, r: Result<&2, &2, Err, Res>) -> IO(Out):
+def fetch.shut(tls: Bool, s: Socket, r: Result<&2, &2, Err, Res>, none: Bool) -> IO(Out):
   do IO<Out>:
     x : Result<&2, &2, Err, Res> <- fetch.close(tls, s, r)
-    return fetch.boxed(x)
+    return fetch.boxed(x, none)
 
 def fetch.hold.go(tls: Bool, s: Socket, res: Res, left: Maybe<&2, String>, ok: Bool) -> IO(Out):
   match ok:
     case True{}:
-      IO.pure(Out, OutDone{res, True{}, fetch.rest(left)})
+      IO.pure(Out, OutDone{res, Some{s}, fetch.rest(left)})
     case False{}:
-      fetch.shut(tls, s, Done{res})
+      fetch.shut(tls, s, Done{res}, False{})
 
 def fetch.hold(tls: Bool, +close: Bool, s: Socket, +rbuf: String, head: Bool, res: Res) -> IO(Out):
   Res{status, +headers, body} = res
   +left = after(String.reverse(rbuf), head)
   fetch.hold.go(tls, s, res, left, again(close, headers, left))
 
-def fetch.done(+keep: Bool, tls: Bool, +close: Bool, s: Socket, rbuf: String, head: Bool, res: Res) -> IO(Out):
-  match keep:
-    case False{}:
-      fetch.shut(tls, s, Done{res})
-    case True{}:
-      fetch.hold(tls, close, s, rbuf, head, res)
-
-def fetch.failout(tls: Bool, s: Socket, e: Maybe<&2, Err>) -> IO(Out):
+def fetch.failout(tls: Bool, s: Socket, e: Maybe<&2, Err>, none: Bool) -> IO(Out):
   do IO<Out>:
     r : Result<&2, &2, Err, Res> <- fetch.bad(tls, s, e)
-    return fetch.boxed(r)
+    return fetch.boxed(r, none)
 
 # Reads until frame says Done or Bad; an empty recv means the server closed.
 @unsafe
-def fetch.loop(+keep: Bool, +close: Bool, +head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Out):
+def fetch.loop(+close: Bool, +head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Out):
   (s, rd) = st
-  Rd{rbuf, n, need, f, err} = rd
+  Rd{rbuf, +n, need, f, err} = rd
   match f:
     case FrameMore{}:
       do IO<Out>:
         m : Socket & Result<&1, &1, U32 & String, String> <- io.recv(tls, s, 65536, ms)
-        fetch.loop(keep, close, head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
+        fetch.loop(close, head, tls, ms, fetch.next(head, Rd{rbuf, n, need, FrameMore{}, None{}}, m))
     case FrameBad{}:
-      fetch.failout(tls, s, err)
+      fetch.failout(tls, s, err, Nat.is_eq(n, 0n))
     case FrameDone{res}:
-      fetch.done(keep, tls, close, s, rbuf, head, res)
-
-def fetch.drop(tls: Bool, o: Out) -> IO(Result<&2, &2, Err, Res>):
-  match o:
-    case OutFail{e}:
-      IO.pure(Result<&2, &2, Err, Res>, Fail{e})
-    case OutDone{res, again, rest}:
-      IO.pure(Result<&2, &2, Err, Res>, Done{res})
-
-def fetch.read(+head: Bool, +tls: Bool, +ms: U32, st: Socket & Rd) -> IO(Result<&2, &2, Err, Res>):
-  do IO<Result<&2, &2, Err, Res>>:
-    o : Out <- fetch.loop(False{}, True{}, head, tls, ms, st)
-    fetch.drop(tls, o)
-
-def fetch.sent(head: Bool, tls: Bool, ms: U32, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&2, &2, Err, Res>):
-  (s, r) = m
-  match r:
-    case Fail{(+code, why)}:
-      fetch.close(tls, s, Fail{err.or_late(code, ErrWrite{code, why})})
-    case Done{u}:
-      fetch.read(head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
-
-def fetch.send(head: Bool, +tls: Bool, ms: U32, s: Socket, wire: String) -> IO(Result<&2, &2, Err, Res>):
-  do IO<Result<&2, &2, Err, Res>>:
-    sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
-    fetch.sent(head, tls, ms, sent)
-
-def exchange.tup(o: Out) -> Bool & Result<&2, &2, Err, Res> & String:
-  match o:
-    case OutFail{e}:
-      (False{}, Fail{e}, "")
-    case OutDone{res, again, rest}:
-      (again, Done{res}, rest)
+      fetch.hold(tls, close, s, rbuf, head, res)
 
 def exchange.sent(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Out):
   (s, r) = m
   match r:
     case Fail{(+code, why)}:
-      fetch.shut(tls, s, Fail{err.or_late(code, ErrWrite{code, why})})
+      fetch.shut(tls, s, Fail{err.or_late(code, ErrWrite{code, why})}, True{})
     case Done{u}:
-      fetch.loop(True{}, close, head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
+      fetch.loop(close, head, tls, ms, (s, Rd{"", 0n, NeedHead{}, FrameMore{}, None{}}))
 
-# One request on an open socket. True means that socket can take another request.
-def exchange(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, s: Socket, wire: String) -> IO(Bool & Result<&2, &2, Err, Res> & String):
-  do IO<Bool & Result<&2, &2, Err, Res> & String>:
+def exchange.go(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, s: Socket, wire: String) -> IO(Out):
+  do IO<Out>:
     sent : Socket & Result<&1, &1, U32 & String, Unit> <- io.send(tls, s, wire)
-    o : Out <- exchange.sent(tls, ms, close, head, sent)
+    exchange.sent(tls, ms, close, head, sent)
+
+def exchange.tup(o: Out) -> Maybe<&1, Socket> & Result<&2, &2, Err, Res> & String:
+  match o:
+    case OutFail{e, none}:
+      (None{}, Fail{e}, "")
+    case OutDone{res, sock, rest}:
+      (sock, Done{res}, rest)
+
+# One request on an open socket. Some{socket}: it can take another request.
+def exchange(+tls: Bool, +ms: U32, +close: Bool, +head: Bool, s: Socket, wire: String) -> IO(Maybe<&1, Socket> & Result<&2, &2, Err, Res> & String):
+  do IO<Maybe<&1, Socket> & Result<&2, &2, Err, Res> & String>:
+    o : Out <- exchange.go(tls, ms, close, head, s, wire)
     return exchange.tup(o)
 
-# A failed handshake is an error, never plaintext.
-def fetch.shook(head: Bool, ms: U32, wire: String, m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&2, &2, Err, Res>):
+# Connection pool: idle sockets by scheme, host, and port. fetch uses a fresh pool per call.
+type Conn is Type:
+  Conn{tls: Bool, s: Socket}
+
+type Pool is Type:
+  Pool{idle: Map<&1, Conn>}
+
+def pool.new() -> Pool:
+  Pool{Map.new(&1, Conn)}
+
+def pool.key(+scheme: String, +host: String, +port: U32) -> String:
+  scheme ++ "://" ++ host ++ ":" ++ U32.show(port)
+
+def pool.take.of(r: Map<&1, Conn> & Maybe<&1, Conn>) -> Pool & Maybe<&1, Conn>:
+  (m, c) = r
+  (Pool{m}, c)
+
+def pool.take(p: Pool, +key: String) -> Pool & Maybe<&1, Conn>:
+  Pool{idle} = p
+  pool.take.of(Map.pop(&1, Conn, idle, key))
+
+def conn.close(c: Conn) -> IO(Unit):
+  Conn{tls, s} = c
+  io.close(tls, s)
+
+def conn.drop(m: Maybe<&1, Conn>) -> IO(Unit):
+  match m:
+    case None{}:
+      IO.pure(Unit, Unit{})
+    case Some{c}:
+      conn.close(c)
+
+# ponytail: one idle socket per origin; a second one replaces the first.
+def pool.give.of(+key: String, c: Conn, r: Map<&1, Conn> & Maybe<&1, Conn>) -> IO(Pool):
+  (m, old) = r
+  do IO<Pool>:
+    conn.drop(old)
+    return Pool{Map.set(&1, Conn, m, key, c)}
+
+def pool.give(p: Pool, +key: String, c: Conn) -> IO(Pool):
+  Pool{idle} = p
+  pool.give.of(key, c, Map.pop(&1, Conn, idle, key))
+
+def pool.close.go(xs: List<&1, Conn>) -> IO(Unit):
+  match xs:
+    case Nil{}:
+      IO.pure(Unit, Unit{})
+    case Con{c, t}:
+      do IO<Unit>:
+        conn.close(c)
+        pool.close.go(t)
+
+def pool.close(p: Pool) -> IO(Unit):
+  Pool{idle} = p
+  pool.close.go(Map.values(&1, Conn, idle))
+
+# RFC 9110 §9.2.2
+def pool.idempotent(+method: String) -> Bool:
+  Bool.or(String.eq(method, "GET"), Bool.or(String.eq(method, "HEAD"), Bool.or(String.eq(method, "OPTIONS"), Bool.or(String.eq(method, "TRACE"), Bool.or(String.eq(method, "PUT"), String.eq(method, "DELETE"))))))
+
+def conn.tls(m: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Result<&1, &1, Err, Conn>):
   (s, r) = m
   match r:
     case Fail{(+code, why)}:
-      fetch.close(True{}, s, Fail{err.or_late(code, ErrTls{code, why})})
+      do IO<Result<&1, &1, Err, Conn>>:
+        Wire.tls.close(s)
+        return Fail{err.or_late(code, ErrTls{code, why})}
     case Done{u}:
-      fetch.send(head, True{}, ms, s, wire)
+      IO.pure(Result<&1, &1, Err, Conn>, Done{Conn{True{}, s}})
 
-def fetch.secure(head: Bool, +ms: U32, sni: String, wire: String, c: Socket, tls: Bool) -> IO(Result<&2, &2, Err, Res>):
+# A failed handshake is an error, never plaintext.
+def conn.secure(+ms: U32, sni: String, s: Socket, tls: Bool) -> IO(Result<&1, &1, Err, Conn>):
   match tls:
     case False{}:
-      fetch.send(head, False{}, ms, c, wire)
+      IO.pure(Result<&1, &1, Err, Conn>, Done{Conn{False{}, s}})
     case True{}:
-      do IO<Result<&2, &2, Err, Res>>:
-        hs : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.tls.connect(c, sni, ms)
-        fetch.shook(head, ms, wire, hs)
+      do IO<Result<&1, &1, Err, Conn>>:
+        hs : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.tls.connect(s, sni, ms)
+        conn.tls(hs)
 
-def fetch.conn(head: Bool, ms: U32, sni: String, wire: String, tls: Bool, r: Result<&1, &1, U32 & String, Socket>) -> IO(Result<&2, &2, Err, Res>):
+def conn.made(+ms: U32, sni: String, tls: Bool, r: Result<&1, &1, U32 & String, Socket>) -> IO(Result<&1, &1, Err, Conn>):
   match r:
     case Fail{(+code, why)}:
-      fetch.fail(err.or_late(code, ErrConnect{code, why}))
-    case Done{c}:
-      fetch.secure(head, ms, sni, wire, c, tls)
+      IO.pure(Result<&1, &1, Err, Conn>, Fail{err.or_late(code, ErrConnect{code, why})})
+    case Done{s}:
+      conn.secure(ms, sni, s, tls)
 
-# One request on one connection to an IPv4 address. Bodies are byte strings.
-def fetch.ip(+method: String, ip: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, List<&2, String>>, body: String, tls: Bool, +ms: U32) -> IO(Result<&2, &2, Err, Res>):
-  do IO<Result<&2, &2, Err, Res>>:
+def conn.open(+tls: Bool, +ms: U32, sni: String, ip: String, port: U32) -> IO(Result<&1, &1, Err, Conn>):
+  do IO<Result<&1, &1, Err, Conn>>:
     c : Result<&1, &1, U32 & String, Socket> <- Wire.connect(ip, port, ms)
-    fetch.conn(String.eq(method, "HEAD"), ms, sni, encode_req(method, target, hf, headers, body), tls, c)
+    conn.made(ms, sni, tls, c)
 
-def fetch.addr(method: String, port: U32, sni: String, hf: String, target: String, headers: Map<&2, List<&2, String>>, body: String, tls: Bool, ms: U32, ip: Maybe<&2, String>) -> IO(Result<&2, &2, Err, Res>):
+def conn.ex(c: Conn, +ms: U32, +head: Bool, wire: String) -> IO(Out):
+  Conn{+tls, s} = c
+  exchange.go(tls, ms, False{}, head, s, wire)
+
+# A socket with bytes past the response is out of step with the server, so it is closed.
+def pool.keep.s(p: Pool, +key: String, +tls: Bool, res: Res, s: Socket, clean: Bool) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match clean:
+    case True{}:
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        p2 : Pool <- pool.give(p, key, Conn{tls, s})
+        return (p2, Done{res})
+    case False{}:
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        io.close(tls, s)
+        return (p, Done{res})
+
+def pool.keep(p: Pool, +key: String, +tls: Bool, res: Res, sock: Maybe<&1, Socket>, +rest: String) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match sock:
+    case None{}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Done{res}))
+    case Some{s}:
+      pool.keep.s(p, key, tls, res, s, String.is_empty(rest))
+
+def pool.after(p: Pool, +key: String, +tls: Bool, o: Out) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match o:
+    case OutFail{e, none}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{e}))
+    case OutDone{res, sock, rest}:
+      pool.keep(p, key, tls, res, sock, rest)
+
+def pool.fresh.conn(p: Pool, +key: String, +tls: Bool, +ms: U32, +head: Bool, wire: String, r: Result<&1, &1, Err, Conn>) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match r:
+    case Fail{e}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{e}))
+    case Done{c}:
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        o : Out <- conn.ex(c, ms, head, wire)
+        pool.after(p, key, tls, o)
+
+def pool.fresh.ip(p: Pool, +key: String, +tls: Bool, +ms: U32, +head: Bool, +host: String, +port: U32, wire: String, ip: Maybe<&2, String>) -> IO(Pool & Result<&2, &2, Err, Res>):
   match ip:
     case None{}:
-      fetch.fail(ErrDns{})
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{ErrDns{}}))
     case Some{addr}:
-      fetch.ip(method, addr, port, sni, hf, target, headers, body, tls, ms)
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        c : Result<&1, &1, Err, Conn> <- conn.open(tls, ms, host, addr, port)
+        pool.fresh.conn(p, key, tls, ms, head, wire, c)
 
-def fetch.dns(method: String, +host: String, port: U32, hf: String, target: String, headers: Map<&2, List<&2, String>>, body: String, tls: Bool, ms: U32) -> IO(Result<&2, &2, Err, Res>):
-  do IO<Result<&2, &2, Err, Res>>:
+def pool.fresh(p: Pool, +key: String, +tls: Bool, +ms: U32, +head: Bool, +host: String, +port: U32, wire: String) -> IO(Pool & Result<&2, &2, Err, Res>):
+  do IO<Pool & Result<&2, &2, Err, Res>>:
     ip : Maybe<&2, String> <- Dns.resolve(host)
-    fetch.addr(method, port, host, hf, target, headers, body, tls, ms, ip)
+    pool.fresh.ip(p, key, tls, ms, head, host, port, wire, ip)
 
-def fetch.scheme(method: String, host: String, port: U32, hf: String, target: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32, +scheme: String, known: Bool) -> IO(Result<&2, &2, Err, Res>):
+# A reused socket the server already closed fails before any response byte.
+def pool.retry(+none: Bool, +idem: Bool) -> Bool:
+  Bool.and(none, idem)
+
+def pool.stale(p: Pool, +key: String, +tls: Bool, +ms: U32, +head: Bool, +host: String, +port: U32, wire: String, e: Err, again: Bool) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match again:
+    case True{}:
+      pool.fresh(p, key, tls, ms, head, host, port, wire)
+    case False{}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{e}))
+
+def pool.reused(p: Pool, +key: String, +tls: Bool, +ms: U32, +head: Bool, +idem: Bool, +host: String, +port: U32, wire: String, o: Out) -> IO(Pool & Result<&2, &2, Err, Res>):
+  match o:
+    case OutFail{e, +none}:
+      pool.stale(p, key, tls, ms, head, host, port, wire, e, pool.retry(none, idem))
+    case OutDone{res, sock, rest}:
+      pool.keep(p, key, tls, res, sock, rest)
+
+def pool.idle(taken: Pool & Maybe<&1, Conn>, +key: String, +tls: Bool, +ms: U32, +head: Bool, +idem: Bool, +host: String, +port: U32, +wire: String) -> IO(Pool & Result<&2, &2, Err, Res>):
+  (p, m) = taken
+  match m:
+    case None{}:
+      pool.fresh(p, key, tls, ms, head, host, port, wire)
+    case Some{c}:
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        o : Out <- conn.ex(c, ms, head, wire)
+        pool.reused(p, key, tls, ms, head, idem, host, port, wire, o)
+
+def pool.origin(p: Pool, +method: String, +ms: U32, headers: Map<&2, List<&2, String>>, body: String, +hf: String, a: Url.Abs, known: Bool) -> IO(Pool & Result<&2, &2, Err, Res>):
+  Url.Abs{+scheme, +host, +port, target} = a
   match known:
     case False{}:
-      fetch.fail(ErrUrl{})
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{ErrUrl{}}))
     case True{}:
-      fetch.dns(method, host, port, hf, target, headers, body, String.eq(scheme, "https"), ms)
+      +key = pool.key(scheme, host, port)
+      pool.idle(pool.take(p, key), key, String.eq(scheme, "https"), ms, String.eq(method, "HEAD"), pool.idempotent(method), host, port, encode_req.on(method, target, hf, headers, body, False{}))
 
-def fetch.abs(method: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32, hf: String, a: Url.Abs) -> IO(Result<&2, &2, Err, Res>):
+def pool.scheme.ok(a: Url.Abs) -> Bool:
   Url.Abs{+scheme, host, port, target} = a
-  fetch.scheme(method, host, port, hf, target, headers, body, ms, scheme, Bool.or(String.eq(scheme, "http"), String.eq(scheme, "https")))
+  Bool.or(String.eq(scheme, "http"), String.eq(scheme, "https"))
 
-def fetch.one(h: Hop, ms: U32) -> IO(Result<&2, &2, Err, Res>):
+# One request, on an idle socket to its origin when the pool has one.
+def pool.one(p: Pool, h: Hop, +ms: U32) -> IO(Pool & Result<&2, &2, Err, Res>):
   Hop{method, +url, headers, body} = h
-  fetch.abs(method, headers, body, ms, Url.host_field(url), url)
+  pool.origin(p, method, ms, headers, body, Url.host_field(url), url, pool.scheme.ok(url))
 
 type Next is Data:
   NDone{res: Result<&2, &2, Err, Res>}
@@ -1701,19 +1808,6 @@ def fetch.policy(mode: Mode, left: Nat, h: Hop, m: Result<&2, &2, Err, Res>) -> 
     case ModeError{}:
       fetch.error(h, m)
 
-# NGo.left is how many redirects may follow this request. 20 is WHATWG's limit.
-@unsafe
-def fetch.hops(+mode: Mode, +ms: U32, st: Next) -> IO(Result<&2, &2, Err, Res>):
-  match st:
-    case NDone{m}:
-      IO.pure(Result<&2, &2, Err, Res>, m)
-    case NStop{}:
-      fetch.fail(ErrRedirect{})
-    case NGo{+left, +h}:
-      do IO<Result<&2, &2, Err, Res>>:
-        m : Result<&2, &2, Err, Res> <- fetch.one(h, ms)
-        fetch.hops(mode, ms, fetch.policy(mode, left, h, m))
-
 def fetch.start(method: String, headers: Map<&2, List<&2, String>>, body: String, u: Maybe<&2, Url.Abs>) -> Next:
   match u:
     case None{}:
@@ -1721,12 +1815,57 @@ def fetch.start(method: String, headers: Map<&2, List<&2, String>>, body: String
     case Some{a}:
       NGo{20n, Hop{method, a, req.put(Map.to_list(&2, List<&2, String>, headers), empty()), body}}
 
-# fetch("GET", "https://example.com/x?y=1", headers, body) follows redirects.
-# Fail is a bad URL, a failed lookup, connect, handshake, send, read, a
-# malformed response, more than 20 redirects, or a step past ms.
-# Body and response body are bytes.
+def pool.next(+mode: Mode, left: Nat, h: Hop, pr: Pool & Result<&2, &2, Err, Res>) -> Pool & Next:
+  (p, m) = pr
+  (p, fetch.policy(mode, left, h, m))
+
+# NGo.left is how many redirects may follow this request. 20 is WHATWG's limit.
+@unsafe
+def pool.hops(+mode: Mode, +ms: U32, st: Pool & Next) -> IO(Pool & Result<&2, &2, Err, Res>):
+  (p, n) = st
+  match n:
+    case NDone{m}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, m))
+    case NStop{}:
+      IO.pure(Pool & Result<&2, &2, Err, Res>, (p, Fail{ErrRedirect{}}))
+    case NGo{+left, +h}:
+      do IO<Pool & Result<&2, &2, Err, Res>>:
+        pr : Pool & Result<&2, &2, Err, Res> <- pool.one(p, h, ms)
+        pool.hops(mode, ms, pool.next(mode, left, h, pr))
+
+# The final response of a fetch, after redirects.
+def fetch.final(r: Result<&2, &2, Err, Res>) -> Result<&2, &2, Err, Res>:
+  r
+
+def pool.final(pr: Pool & Result<&2, &2, Err, Res>) -> Pool & Result<&2, &2, Err, Res>:
+  (p, r) = pr
+  (p, fetch.final(r))
+
+# pool.how(p, "GET", "https://example.com/x?y=1", headers, body, ms, mode) follows redirects
+# on p's idle sockets. Fail is a bad URL, a failed lookup, connect, handshake, send, read,
+# a malformed response, more than 20 redirects, or a step past ms. Bodies are bytes.
+def pool.how(p: Pool, method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32, mode: Mode) -> IO(Pool & Result<&2, &2, Err, Res>):
+  do IO<Pool & Result<&2, &2, Err, Res>>:
+    pr : Pool & Result<&2, &2, Err, Res> <- pool.hops(mode, ms, (p, fetch.start(method, headers, body, Url.absolute(url))))
+    return pool.final(pr)
+
+def pool.fetch.with(p: Pool, method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32) -> IO(Pool & Result<&2, &2, Err, Res>):
+  pool.how(p, method, url, headers, body, ms, ModeFollow{})
+
+def pool.fetch(p: Pool, method: String, url: String, headers: Map<&2, List<&2, String>>, body: String) -> IO(Pool & Result<&2, &2, Err, Res>):
+  pool.fetch.with(p, method, url, headers, body, 30000)
+
+def fetch.end(pr: Pool & Result<&2, &2, Err, Res>) -> IO(Result<&2, &2, Err, Res>):
+  (p, r) = pr
+  do IO<Result<&2, &2, Err, Res>>:
+    pool.close(p)
+    return r
+
+# fetch is pool.how on a fresh pool that closes afterwards.
 def fetch.how(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32, mode: Mode) -> IO(Result<&2, &2, Err, Res>):
-  fetch.hops(mode, ms, fetch.start(method, headers, body, Url.absolute(url)))
+  do IO<Result<&2, &2, Err, Res>>:
+    pr : Pool & Result<&2, &2, Err, Res> <- pool.how(pool.new(), method, url, headers, body, ms, mode)
+    fetch.end(pr)
 
 def fetch.with(method: String, url: String, headers: Map<&2, List<&2, String>>, body: String, ms: U32) -> IO(Result<&2, &2, Err, Res>):
   fetch.how(method, url, headers, body, ms, ModeFollow{})
