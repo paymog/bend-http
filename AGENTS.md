@@ -40,4 +40,4 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `bend file.bend` runs through the checker's runner and overflows on strings over about 30 KB. Build big-body programs natively: `bend file.bend -o app`.
 - The registry shows the first comment line of the first file in path order as the package description. `about.bend` exists for that reason. Keep the first comment in each package's first file a one-line description.
 - CI (`.github/workflows/ci.yml`) is the list of checks to run: `bend PROOF.bend` and `bend check.bend` in the root, `bend PROOF.bend` in each package folder, then each package's `check.bend`. `smoke.bend` does live fetches. Run `bend <file> --check-only` for a fast type check.
-- Packages publish to the Elbow registry (`elbow add http@0.11.0`), not the Bend hub. A breaking change needs a new version.
+- Packages publish to the Elbow registry (`elbow add http@0.12.0`), not the Bend hub. A breaking change needs a new version.
