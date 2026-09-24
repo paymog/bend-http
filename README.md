@@ -2,7 +2,7 @@
 
 HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are byte strings: one `Char` per octet.
 
-`http@0.9.2` is a break from `http@0.8.0`. `fetch` returns `Result`, not `Maybe`. Each header name holds a list of values.
+`http@0.10.0` is a break from `http@0.9.2`. `exchange` returns the socket as `Maybe<Socket>` so a pool can reuse it.
 
 ## Install
 
@@ -21,7 +21,7 @@ export PATH="$HOME/.local/bin:$PATH"
 Create `main.bend`, then:
 
 ```sh
-elbow add http@0.9.2
+elbow add http@0.10.0
 ```
 
 Elbow writes a hash import, `elbow.toml`, and `elbow.lock`. Commit those. `http` ships `.c` and `.js` effects. They run host code. Proofs do not cover them.
