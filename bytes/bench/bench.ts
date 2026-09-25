@@ -66,3 +66,18 @@ const c = Buffer.from(buf);
 t0 = performance.now();
 const eq = buf.equals(c);
 console.log(`equal\t${performance.now() - t0}\t${eq ? 1 : 0}`);
+
+for (const size of [1000000, 4000000]) {
+  t0 = performance.now();
+  let built = new Uint8Array(1);
+  for (let i = 0; i < size; i++) {
+    if (i === built.length) {
+      const grown = new Uint8Array(built.length * 2);
+      grown.set(built);
+      built = grown;
+    }
+    built[i] = i & 255;
+  }
+  const buildCs = size + built[size - 1];
+  console.log(`build_${size}\t${performance.now() - t0}\t${buildCs}`);
+}

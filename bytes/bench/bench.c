@@ -20,6 +20,26 @@ static uint32_t fill_buf(uint8_t *b, size_t n) {
 	return (uint32_t)b[12345] + (uint32_t)b[n - 1];
 }
 
+static int build(size_t n) {
+	uint8_t *out = NULL;
+	size_t len = 0, cap = 0;
+	double t0 = now_ms();
+	for (size_t i = 0; i < n; i++) {
+		if (len == cap) {
+			size_t next = cap ? cap * 2 : 1;
+			uint8_t *grown = realloc(out, next);
+			if (!grown) { free(out); return 1; }
+			out = grown;
+			cap = next;
+		}
+		out[len++] = (uint8_t)(i & 255);
+	}
+	uint32_t cs = (uint32_t)n + out[len - 1];
+	printf("build_%zu\t%.6f\t%u\n", n, now_ms() - t0, cs);
+	free(out);
+	return 0;
+}
+
 int main(int argc, char **argv) {
 	int L = 28;
 	if (argc > 1)
@@ -103,6 +123,9 @@ int main(int argc, char **argv) {
 	int eq = memcmp(b, c, n) == 0;
 	t1 = now_ms();
 	printf("equal\t%.6f\t%u\n", t1 - t0, eq ? 1u : 0u);
+
+	if (build(1000000) || build(4000000))
+		return 1;
 
 	free(c);
 	free(b);

@@ -62,3 +62,11 @@ c = bytearray(b)
 t0 = time.perf_counter()
 eq = b == c
 print(f"equal\t{(time.perf_counter() - t0) * 1000:.6f}\t{1 if eq else 0}")
+
+for size in (1000000, 4000000):
+    t0 = time.perf_counter()
+    built = bytearray()
+    for i in range(size):
+        built.append(i & 255)
+    cs = size + built[-1]
+    print(f"build_{size}\t{(time.perf_counter() - t0) * 1000:.6f}\t{cs}")
