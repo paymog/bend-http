@@ -964,3 +964,96 @@ def get_put_same(
 def Laws.omap_get_put_same(K, V, cmp, refl, eq, flip, trans, m, tree, k, v):
   get_put_same(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, m, None{}, None{}, k, v, tree,
     {==}, {==})
+
+def neq_false(c: Cmp, ne: {c != EQ{} : Cmp}) -> {Cmp.is_eq(c) == False{} : Bool}:
+  match c:
+    case LT{}:
+      {==}
+    case EQ{}:
+      exfalso({Cmp.is_eq(EQ{}) == False{} : Bool}, ne({==}))
+    case GT{}:
+      {==}
+
+def ne_absurd(
+  -A: Type, -c: Cmp, nef: {Cmp.is_eq(c) == False{} : Bool}, e: {c == EQ{} : Cmp}
+) -> A:
+  +tf = Equal.trans(Bool, True{}, Cmp.is_eq(c), False{},
+    Equal.sym(Bool, Cmp.is_eq(c), True{}, Equal.cong(Cmp, Bool, x => Cmp.is_eq(x), c, EQ{}, e)),
+    nef)
+  exfalso(A, absurd_b(Equal.sym(Bool, True{}, False{}, tf)))
+
+def eq_flip(
+  ~K: Data, ~cmp: K -> K -> Cmp, ~flip: Flip(~K, ~cmp), +x: K, +y: K,
+  e: {cmp(x, y) == EQ{} : Cmp}
+) -> {cmp(y, x) == EQ{} : Cmp}:
+  Equal.trans(Cmp, cmp(y, x), Laws.flip(cmp(x, y)), EQ{}, flip(x, y),
+    Equal.cong(Cmp, Cmp, c => Laws.flip(c), cmp(x, y), EQ{}, e))
+
+def get_put_other(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~refl: Refl(~K, ~cmp), ~eq: Eq(~K, ~cmp),
+  ~flip: Flip(~K, ~cmp), ~trans: Trans(~K, ~cmp),
+  t: O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>, +k2: K, +k: K, +v: V,
+  +bt: {Laws.bounded(~K, ~V, ~cmp, t, lb, ub) == True{} : Bool},
+  +ea: {Laws.above(~K, ~cmp, lb, k2) == True{} : Bool},
+  +eb: {Laws.below(~K, ~cmp, ub, k2) == True{} : Bool},
+  +nef: {Cmp.is_eq(cmp(k2, k)) == False{} : Bool}
+) -> {g(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, t, k2, v), k)
+      == g(~K, ~V, ~cmp, t, k) : Maybe<&2, V>}:
+  match t:
+    case O.OTip{}:
+      split(c => {getc(~K, ~V, ~cmp, c, k, v, O.OTip{}, O.OTip{}) == None{} : Maybe<&2, V>},
+        cmp(k, k2),
+        e => {==},
+        e => ne_absurd({Some{v} == None{} : Maybe<&2, V>}, cmp(k2, k), nef,
+          eq_flip(~K, ~cmp, ~flip, k, k2, e)),
+        e => {==})
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      +b_l = bn.l(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      +b_h = bn.h(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      +plo = O.OMap.put(~K, ~V, ~cmp, lo, k2, v)
+      +phi = O.OMap.put(~K, ~V, ~cmp, hi, k2, v)
+      +old = {O.OBin{s, key, val, lo, hi} : O.OMap<K, V>}
+      cmp.split(O.OMap<K, V>, Maybe<&2, V>, y => g(~K, ~V, ~cmp, y, k),
+        g(~K, ~V, ~cmp, old, k), cmp(k2, key),
+        u => O.OMap.balance(K, V, key, val, O.OMap.put(~K, ~V, ~cmp, lo, k2, v), hi),
+        u => O.OBin{s, key, v, lo, hi},
+        u => O.OMap.balance(K, V, key, val, lo, O.OMap.put(~K, ~V, ~cmp, hi, k2, v)),
+        +e => mtr(V, g(~K, ~V, ~cmp, O.OMap.balance(K, V, key, val, plo, hi), k),
+          g(~K, ~V, ~cmp, O.OBin{0, key, val, plo, hi}, k), g(~K, ~V, ~cmp, old, k),
+          balance.get(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, lb, ub, k, key, val, plo, hi,
+            put.bnd(~K, ~V, ~cmp, ~flip, ~trans, lo, lb, Some{key}, k2, v, b_l, ea,
+              lt_true(cmp(k2, key), e)),
+            b_h),
+          split(c => {getc(~K, ~V, ~cmp, c, k, val, plo, hi)
+              == getc(~K, ~V, ~cmp, c, k, val, lo, hi) : Maybe<&2, V>},
+            cmp(k, key),
+            e2 => get_put_other(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, lo, lb, Some{key},
+              k2, k, v, b_l, ea, lt_true(cmp(k2, key), e), nef),
+            e2 => {==},
+            e2 => {==})),
+        +e => split(c => {getc(~K, ~V, ~cmp, c, k, v, lo, hi)
+            == getc(~K, ~V, ~cmp, c, k, val, lo, hi) : Maybe<&2, V>},
+          cmp(k, key),
+          e2 => {==},
+          e2 => ne_absurd({Some{v} == Some{val} : Maybe<&2, V>}, cmp(k2, k), nef,
+            rw(K, y => {cmp(y, k) == EQ{} : Cmp}, k2, key, eq(k2, key, e),
+              eq_flip(~K, ~cmp, ~flip, k, key, e2))),
+          e2 => {==}),
+        +e => mtr(V, g(~K, ~V, ~cmp, O.OMap.balance(K, V, key, val, lo, phi), k),
+          g(~K, ~V, ~cmp, O.OBin{0, key, val, lo, phi}, k), g(~K, ~V, ~cmp, old, k),
+          balance.get(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, lb, ub, k, key, val, lo, phi,
+            b_l,
+            put.bnd(~K, ~V, ~cmp, ~flip, ~trans, hi, Some{key}, ub, k2, v, b_h,
+              lt_true(cmp(key, k2), gt_flip(~K, ~cmp, ~flip, k2, key, e)), eb)),
+          split(c => {getc(~K, ~V, ~cmp, c, k, val, lo, phi)
+              == getc(~K, ~V, ~cmp, c, k, val, lo, hi) : Maybe<&2, V>},
+            cmp(k, key),
+            e2 => {==},
+            e2 => {==},
+            e2 => get_put_other(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, hi, Some{key}, ub,
+              k2, k, v, b_h, lt_true(cmp(key, k2), gt_flip(~K, ~cmp, ~flip, k2, key, e)),
+              eb, nef))))
+
+def Laws.omap_get_put_other_key(K, V, cmp, refl, eq, flip, trans, m, tree, k2, k, ne, v):
+  get_put_other(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, m, None{}, None{}, k2, k, v, tree,
+    {==}, {==}, neq_false(cmp(k2, k), ne))
