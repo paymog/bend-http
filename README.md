@@ -11,16 +11,16 @@ You need [Bend 2.0.27 or newer](https://bend-lang.com/install.sh) and [Bun 1.4.2
 Import a package at the top of your file. `bend` fetches it from the hub and checks it against its hash:
 
 ```bend
-import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
+import 0x49814d83de8f70993a43e1002be29ecd/bytes.bend as Bytes
 ```
 
-A name and its hash import the same package. Packages that depend on each other import from the hub, so a `Bytes.Bytes` from your own import is the same type that `http` uses.
+A name and its hash import the same package. Each version is a distinct type: `http` and `process` still import `bytes@0.2.0.0` (`0xbf22530d1ea11c951d1ecaa353ed1580`), so import that hash to pass a `Bytes.Bytes` to them.
 
 ## Packages
 
 | Package | Import | What it does |
 |---|---|---|
-| [`bytes`](bytes) | `0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend` | Byte buffers packed four bytes to a `U32`, with bounds-checked access. |
+| [`bytes`](bytes) | `0x49814d83de8f70993a43e1002be29ecd/bytes.bend` | Byte buffers packed four bytes to a `U32`, with bounds-checked access, endian integers, search, hex, and base64. |
 | [`encoding`](encoding) | `0xaec630f7a2f6b6ef96750f95d6e4195b/encoding.bend` | UTF-8 and hex encoding for byte strings. |
 | [`json`](json) | `0xaaa10a97bf5ac6990143da2c863f8a3f/json.bend` | JSON values, parsed and encoded as RFC 8259. |
 | [`zlib`](zlib) | `0xe01785b64266bf3ba0068183b9f9f5e3/zlib.bend` | DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950). |
@@ -33,7 +33,7 @@ A name and its hash import the same package. Packages that depend on each other 
 | [`collections`](collections) | `./collections/collections.bend` (local; not yet published) | An ordered map and set keyed by any `Data` type, a growable vector, a deque, and a priority queue. Import the file you need: `omap.bend`, `vec.bend`, `deque.bend`, or `heap.bend`. |
 | [`unicode`](unicode) | `./unicode/unicode.bend` (local; not yet published) | Unicode 17.0 general category, NFC/NFD, full case folding, and grapheme clusters. See [unicode/README.md](unicode/README.md). |
 
-The hub versions are `bytes@0.2.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@0.1.0.0`, `url@0.4.0.0`, `wire@0.4.0.0`, `dns@0.3.1.0`, `http@0.14.0.0`, and `router@0.1.1.0`, each named `bend-kit-<package>`.
+The hub versions are `bytes@0.3.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@0.1.0.0`, `url@0.4.0.0`, `wire@0.4.0.0`, `dns@0.3.1.0`, `http@0.14.0.0`, and `router@0.1.1.0`, each named `bend-kit-<package>`.
 
 `wire`, `http`, and `files` ship `.c` and `.js` effects. They run host code, and proofs do not cover them.
 
