@@ -2,7 +2,7 @@
 #   curl -s --data-binary @16m.bin http://127.0.0.1:18093/
 import Base
 import ../http.bend as Http
-import ../bytes/bytes.bend as Bytes
+import bend-net-bytes@0.2.0.0/bytes.bend as Bytes
 
 def len(req: Http.Req) -> IO(Http.Res):
   Http.Req{method, path, headers, body} = req
