@@ -25,6 +25,13 @@ Bend is young, so the compiler, checker, runtime, or guide can be wrong. Before 
 2. Otherwise open one with `gh issue create -R bendlang/bend`. Include the Bend version (`bend version`), the OS and architecture, the minimal file, the command you ran, and the expected and actual output.
 3. Work around the bug in this repo, and put a comment next to the workaround that links the issue, so it can be removed once the fix ships.
 
+## Memory
+
+On 2026-09-24 at 21:25, three `bend` processes (about 28 GB, 14 GB, and 14 GB) filled this 48 GB Mac. They were importance donors, so jetsam would not kill them. The compressor held about 38 GB, free memory was about 14 MB, and the data volume was too full for swap to grow. `watchdogd` missed its check-in for 90 seconds and the kernel panicked (`/Library/Logs/DiagnosticReports/panic-full-2026-09-24-212532.0002.panic`). The filesystem looked dead because nothing could be scheduled.
+
+Bend is young, and a native run can grow without bound. Check a small input first. Do not fan out `bend` processes. If one passes about 20 GB RSS, kill it. Do not start one when the data volume is nearly full: swap has nowhere to go.
+
+
 ## Laws and proofs
 
 A law is a claim; a proof is a def with the same name. Each package has:
