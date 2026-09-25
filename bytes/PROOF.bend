@@ -145,3 +145,225 @@ def Laws.concat_pieces():
 
 def Laws.concat_none():
   {==}
+
+def Laws.append_in_room():
+  {==}
+
+def Laws.append_grows():
+  {==}
+
+def Laws.eq_after_appends():
+  {==}
+
+def Laws.u16be_at():
+  {==}
+
+def Laws.u16le_at():
+  {==}
+
+def Laws.u32be_across_words():
+  {==}
+
+def Laws.u32le_across_words():
+  {==}
+
+def Laws.u32be_top():
+  {==}
+
+def Laws.u32_past_len():
+  {==}
+
+def Laws.u16_past_len():
+  {==}
+
+def Laws.set_u16be_at():
+  {==}
+
+def Laws.set_u16le_masks():
+  {==}
+
+def Laws.set_u32be_across_words():
+  {==}
+
+def Laws.set_u32le_across_words():
+  {==}
+
+def Laws.set_u16_past_len():
+  {==}
+
+def Laws.u32le_roundtrip():
+  {==}
+
+def Laws.find_from_later():
+  {==}
+
+def Laws.find_from_at_start():
+  {==}
+
+def Laws.find_from_too_late():
+  {==}
+
+def Laws.find_from_empty_at_len():
+  {==}
+
+def Laws.find_from_past_len():
+  {==}
+
+def Laws.rfind_last():
+  {==}
+
+def Laws.rfind_at_end():
+  {==}
+
+def Laws.rfind_at_zero():
+  {==}
+
+def Laws.rfind_missing():
+  {==}
+
+def Laws.rfind_too_long():
+  {==}
+
+def Laws.rfind_empty():
+  {==}
+
+def Laws.starts_with_method():
+  {==}
+
+def Laws.starts_with_other():
+  {==}
+
+def Laws.starts_with_too_long():
+  {==}
+
+def Laws.starts_with_empty():
+  {==}
+
+def Laws.ends_with_crlf():
+  {==}
+
+def Laws.ends_with_other():
+  {==}
+
+def Laws.ends_with_too_long():
+  {==}
+
+def Laws.split_fields():
+  {==}
+
+def Laws.split_ends():
+  {==}
+
+def Laws.split_no_overlap():
+  {==}
+
+def Laws.split_lines():
+  {==}
+
+def Laws.split_empty_sep():
+  {==}
+
+def Laws.split_empty():
+  {==}
+
+def Laws.split_sep_too_long():
+  {==}
+
+def Laws.cmp_first_byte():
+  {==}
+
+def Laws.cmp_last_byte():
+  {==}
+
+def Laws.cmp_second_word():
+  {==}
+
+def Laws.cmp_unsigned():
+  {==}
+
+def Laws.cmp_prefix():
+  {==}
+
+def Laws.cmp_zero_tail():
+  {==}
+
+def Laws.cmp_equal():
+  {==}
+
+def Laws.to_hex_octets():
+  {==}
+
+def Laws.to_hex_empty():
+  {==}
+
+def Laws.from_hex_either_case():
+  {==}
+
+def Laws.from_hex_odd():
+  {==}
+
+def Laws.from_hex_bad_char():
+  {==}
+
+def Laws.from_hex_empty():
+  {==}
+
+def Laws.base64_empty():
+  {==}
+
+def Laws.base64_f():
+  {==}
+
+def Laws.base64_fo():
+  {==}
+
+def Laws.base64_foo():
+  {==}
+
+def Laws.base64_foob():
+  {==}
+
+def Laws.base64_fooba():
+  {==}
+
+def Laws.base64_foobar():
+  {==}
+
+def Laws.base64_high_octets():
+  {==}
+
+def Laws.from_base64_f():
+  {==}
+
+def Laws.from_base64_fo():
+  {==}
+
+def Laws.from_base64_foobar():
+  {==}
+
+def Laws.from_base64_fooba():
+  {==}
+
+def Laws.from_base64_high_octets():
+  {==}
+
+def Laws.from_base64_empty():
+  {==}
+
+def Laws.from_base64_length():
+  {==}
+
+def Laws.from_base64_inner_pad():
+  {==}
+
+def Laws.from_base64_three_pads():
+  {==}
+
+def Laws.from_base64_bad_char():
+  {==}
+
+def Laws.from_base64_foob():
+  {==}
+
+def Laws.from_base64_pad_bits():
+  {==}

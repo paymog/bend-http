@@ -153,6 +153,84 @@ def set(b: Bytes, +i: U32, +v: U32) -> Bytes:
   Bytes{+len, buf} = b
   set.if(U32.is_lt(i, len), len, buf, i, v)
 
+# The next index: one forward when up, one back when not.
+def step(+up: Bool, +i: U32) -> U32:
+  Bool.pick(U32, up, (i + 1 : U32), (i - 1 : U32))
+
+# Do n bytes from i fit in len?
+def fits(+len: U32, +i: U32, +n: U32) -> Bool:
+  Bool.and(U32.is_le(n, len), U32.is_le(i, (len - n : U32)))
+
+# n bytes from j, each shifted in below the ones before: the first byte read is the most significant.
+def uint.go(n: Nat, r: Array<U32> & U32, +j: U32, +up: Bool, +acc: U32) -> Array<U32> & U32:
+  match n:
+    case 0n:
+      (a, v) = r
+      (a, acc)
+    case 1n+p:
+      (a, +v) = r
+      uint.go(p, peek(a, step(up, j)), step(up, j), up, ((acc << 8n) .|. v : U32))
+
+# Big-endian reads forward from i; little-endian reads back from the last byte.
+def uint.if(ok: Bool, +len: U32, buf: Array<U32>, +i: U32, +n: U32, +be: Bool) -> Bytes & Maybe<&2, U32>:
+  match ok:
+    case True{}:
+      +j = Bool.pick(U32, be, i, (i + n - 1 : U32))
+      get.some(len, uint.go(U32.to_nat(n), peek(buf, j), j, be, 0))
+    case False{}:
+      (Bytes{len, buf}, None{})
+
+def uint(b: Bytes, +i: U32, +n: U32, +be: Bool) -> Bytes & Maybe<&2, U32>:
+  Bytes{+len, buf} = b
+  uint.if(fits(len, i, n), len, buf, i, n, be)
+
+# Unsigned integers at byte i, or None when they run past len.
+# be: most significant byte first (network order); le: least significant first.
+def get.u16be(b: Bytes, +i: U32) -> Bytes & Maybe<&2, U32>:
+  uint(b, i, 2, True{})
+
+def get.u16le(b: Bytes, +i: U32) -> Bytes & Maybe<&2, U32>:
+  uint(b, i, 2, False{})
+
+def get.u32be(b: Bytes, +i: U32) -> Bytes & Maybe<&2, U32>:
+  uint(b, i, 4, True{})
+
+def get.u32le(b: Bytes, +i: U32) -> Bytes & Maybe<&2, U32>:
+  uint(b, i, 4, False{})
+
+# n bytes of v from j, least significant first.
+def put.go(n: Nat, a: Array<U32>, +j: U32, +up: Bool, +v: U32) -> Array<U32>:
+  match n:
+    case 0n:
+      a
+    case 1n+p:
+      put.go(p, poke(a, j, v), step(up, j), up, U32.shrn(v, 8n))
+
+# Little-endian writes forward from i; big-endian writes back from the last byte.
+def put.if(ok: Bool, +len: U32, buf: Array<U32>, +i: U32, +n: U32, +be: Bool, +v: U32) -> Bytes:
+  match ok:
+    case True{}:
+      Bytes{len, put.go(U32.to_nat(n), buf, Bool.pick(U32, be, (i + n - 1 : U32), i), Bool.not(be), v)}
+    case False{}:
+      Bytes{len, buf}
+
+def put(b: Bytes, +i: U32, +n: U32, +be: Bool, +v: U32) -> Bytes:
+  Bytes{+len, buf} = b
+  put.if(fits(len, i, n), len, buf, i, n, be, v)
+
+# v's low 16 or 32 bits at byte i. Nothing changes when they would run past len.
+def set.u16be(b: Bytes, +i: U32, +v: U32) -> Bytes:
+  put(b, i, 2, True{}, v)
+
+def set.u16le(b: Bytes, +i: U32, +v: U32) -> Bytes:
+  put(b, i, 2, False{}, v)
+
+def set.u32be(b: Bytes, +i: U32, +v: U32) -> Bytes:
+  put(b, i, 4, True{}, v)
+
+def set.u32le(b: Bytes, +i: U32, +v: U32) -> Bytes:
+  put(b, i, 4, False{}, v)
+
 # String.length counts in Nat, which costs more than the walk itself.
 def count(s: String, +n: U32) -> U32:
   match s:
@@ -210,20 +288,32 @@ def slice(b: Bytes, +start: U32, +n: U32) -> Bytes & Bytes:
   +s = U32.min(start, len)
   slice.at(len, buf, s, U32.min(n, (len - s : U32)))
 
-def append.fin(+n: U32, r: Array<U32> & Array<U32>) -> Bytes:
-  (x, out) = r
-  Bytes{n, out}
+def dst(r: Array<U32> & Array<U32>) -> Array<U32>:
+  (src, out) = r
+  out
 
-def append.two(+n: U32, +la: U32, +lb: U32, bb: Array<U32>, r: Array<U32> & Array<U32>) -> Bytes:
-  (x, out) = r
-  append.fin(n, copy(lb, bb, out, 0, la))
+# Does a buffer holding len bytes have room for n? Its 2^d words fit the fewest that hold len.
+def room(+len: U32, +n: U32) -> Bool:
+  U32.is_le(words(n), U32.shln(1, depth(words(len))))
 
-# a then b, in a new buffer.
+def grow.if(fits: Bool, +len: U32, buf: Array<U32>, +n: U32) -> Array<U32>:
+  match fits:
+    case True{}:
+      buf
+    case False{}:
+      dst(copy(len, buf, alloc(n), 0, 0))
+
+# buf, or a copy of its first len bytes in the fewest 2^d words that hold n.
+def grow(+len: U32, buf: Array<U32>, +n: U32) -> Array<U32>:
+  grow.if(room(len, n), len, buf, n)
+
+# a then b. b is written into a's buffer while it has room, and the buffer at least
+# doubles when it runs out, so building a buffer one piece at a time is O(total).
 def append(a: Bytes, b: Bytes) -> Bytes:
   Bytes{+la, ba} = a
   Bytes{+lb, bb} = b
   +n = (la + lb : U32)
-  append.two(n, la, lb, bb, copy(la, ba, alloc(n), 0, 0))
+  Bytes{n, dst(copy(lb, bb, grow(la, ba, n), 0, la))}
 
 def concat.total.con(x: Bytes, r: List<&1, Bytes> & U32) -> List<&1, Bytes> & U32:
   (t, n) = r
@@ -237,17 +327,13 @@ def concat.total(xs: List<&1, Bytes>, +n: U32) -> List<&1, Bytes> & U32:
       Bytes{+l, buf} = x
       concat.total.con(Bytes{l, buf}, concat.total(t, (n + l : U32)))
 
-def concat.put(r: Array<U32> & Array<U32>) -> Array<U32>:
-  (src, out) = r
-  out
-
 def concat.go(xs: List<&1, Bytes>, out: Array<U32>, +at: U32) -> Array<U32>:
   match xs:
     case Nil{}:
       out
     case Con{x, t}:
       Bytes{+l, buf} = x
-      concat.go(t, concat.put(copy(l, buf, out, 0, at)), (at + l : U32))
+      concat.go(t, dst(copy(l, buf, out, 0, at)), (at + l : U32))
 
 def concat.of(r: List<&1, Bytes> & U32) -> Bytes:
   (xs, +n) = r
@@ -276,7 +362,8 @@ def at(a: Array<U32>, +needle: String, +j: U32) -> Array<U32> & Bool:
   at.go(needle, True{}, peek(a, j), j)
 
 # ponytail: naive search; a mismatch costs one byte read per position, but a repetitive needle is O(len * needle). Add a SWAR scan or two-way search if find gets hot.
-def find.go(f: Nat, r: Array<U32> & Bool, +needle: String, +i: U32) -> Array<U32> & Maybe<&2, U32>:
+# f counts the positions left after i.
+def find.go(f: Nat, r: Array<U32> & Bool, +needle: String, +i: U32, +up: Bool) -> Array<U32> & Maybe<&2, U32>:
   match f:
     case 0n:
       (a, hit) = r
@@ -287,24 +374,110 @@ def find.go(f: Nat, r: Array<U32> & Bool, +needle: String, +i: U32) -> Array<U32
         case True{}:
           (a, Some{i})
         case False{}:
-          find.go(p, at(a, needle, (i + 1 : U32)), needle, (i + 1 : U32))
+          find.go(p, at(a, needle, step(up, i)), needle, step(up, i), up)
 
 def find.fin(+len: U32, r: Array<U32> & Maybe<&2, U32>) -> Bytes & Maybe<&2, U32>:
   (a, x) = r
   (Bytes{len, a}, x)
 
-def find.at(big: Bool, +len: U32, buf: Array<U32>, +needle: String, +m: U32) -> Bytes & Maybe<&2, U32>:
-  match big:
+def find.at(none: Bool, +len: U32, buf: Array<U32>, +needle: String, +i: U32, +f: U32, +up: Bool) -> Bytes & Maybe<&2, U32>:
+  match none:
     case True{}:
       (Bytes{len, buf}, None{})
     case False{}:
-      find.fin(len, find.go(U32.to_nat((len - m : U32)), at(buf, needle, 0), needle, 0))
+      find.fin(len, find.go(U32.to_nat(f), at(buf, needle, i), needle, i, up))
+
+# Index of the first match of needle (a byte string) at or after start, or None.
+# An empty needle matches at start when start <= len.
+def find.from(b: Bytes, +needle: String, +start: U32) -> Bytes & Maybe<&2, U32>:
+  Bytes{+len, buf} = b
+  +m = count(needle, 0)
+  find.at(Bool.or(U32.is_lt(len, m), U32.is_lt((len - m : U32), start)), len, buf, needle, start, (len - m - start : U32), True{})
 
 # Index of the first match of needle (a byte string), or None. An empty needle matches at 0.
 def find(b: Bytes, +needle: String) -> Bytes & Maybe<&2, U32>:
+  find.from(b, needle, 0)
+
+# Index of the last match of needle, or None. An empty needle matches at len.
+def rfind(b: Bytes, +needle: String) -> Bytes & Maybe<&2, U32>:
   Bytes{+len, buf} = b
   +m = count(needle, 0)
-  find.at(U32.is_lt(len, m), len, buf, needle, m)
+  find.at(U32.is_lt(len, m), len, buf, needle, (len - m : U32), (len - m : U32), False{})
+
+def at.fin(+len: U32, r: Array<U32> & Bool) -> Bytes & Bool:
+  (a, ok) = r
+  (Bytes{len, a}, ok)
+
+def at.if(fits: Bool, +len: U32, buf: Array<U32>, +needle: String, +j: U32) -> Bytes & Bool:
+  match fits:
+    case True{}:
+      at.fin(len, at(buf, needle, j))
+    case False{}:
+      (Bytes{len, buf}, False{})
+
+# Does b begin with prefix (a byte string)?
+def starts_with(b: Bytes, +prefix: String) -> Bytes & Bool:
+  Bytes{+len, buf} = b
+  +m = count(prefix, 0)
+  at.if(U32.is_le(m, len), len, buf, prefix, 0)
+
+# Does b end with suffix (a byte string)?
+def ends_with(b: Bytes, +suffix: String) -> Bytes & Bool:
+  Bytes{+len, buf} = b
+  +m = count(suffix, 0)
+  at.if(U32.is_le(m, len), len, buf, suffix, (len - m : U32))
+
+# Match positions of sep, latest first, that do not overlap an earlier match.
+# f counts the positions left; skip counts the bytes still inside the last match.
+def split.scan(f: Nat, r: Array<U32> & Bool, +sep: String, +m: U32, +i: U32, +skip: U32, +cuts: List<&2, U32>) -> Array<U32> & List<&2, U32>:
+  match f:
+    case 0n:
+      (a, hit) = r
+      (a, cuts)
+    case 1n+p:
+      (a, +hit) = r
+      +take = Bool.and(hit, U32.is_eq(skip, 0))
+      +next = Bool.pick(U32, take, (m - 1 : U32), Bool.pick(U32, U32.is_eq(skip, 0), 0, (skip - 1 : U32)))
+      split.scan(p, at(a, sep, (i + 1 : U32)), sep, m, (i + 1 : U32), next, Bool.pick(List<&2, U32>, take, Con{i, cuts}, cuts))
+
+def snd(r: Bytes & Bytes) -> Bytes:
+  (a, b) = r
+  b
+
+# r holds the buffer and the piece that ends at end; each earlier cut j starts one at j + m.
+def split.cut(cuts: List<&2, U32>, r: Bytes & Bytes, +end: U32, +m: U32, acc: List<&1, Bytes>) -> List<&1, Bytes>:
+  match cuts:
+    case Nil{}:
+      (b, piece) = r
+      Con{snd(slice(b, 0, end)), Con{piece, acc}}
+    case Con{+j, t}:
+      (b, piece) = r
+      split.cut(t, slice(b, (j + m : U32), (end - j - m : U32)), j, m, Con{piece, acc})
+
+def split.of(cuts: List<&2, U32>, b: Bytes, +len: U32, +m: U32) -> List<&1, Bytes>:
+  match cuts:
+    case Nil{}:
+      Con{b, Nil{}}
+    case Con{+j, t}:
+      split.cut(t, slice(b, (j + m : U32), (len - j - m : U32)), j, m, Nil{})
+
+def split.run(+len: U32, +m: U32, r: Array<U32> & List<&2, U32>) -> List<&1, Bytes>:
+  (a, cuts) = r
+  split.of(cuts, Bytes{len, a}, len, m)
+
+def split.if(whole: Bool, +len: U32, buf: Array<U32>, +sep: String, +m: U32) -> List<&1, Bytes>:
+  match whole:
+    case True{}:
+      Con{Bytes{len, buf}, Nil{}}
+    case False{}:
+      split.run(len, m, split.scan(U32.to_nat((len - m + 1 : U32)), at(buf, sep, 0), sep, m, 0, 0, Nil{}))
+
+# The pieces between matches of sep (a byte string), left to right. n matches give n + 1
+# pieces, so a match at either end gives an empty piece. An empty sep gives b whole.
+def split(b: Bytes, +sep: String) -> List<&1, Bytes>:
+  Bytes{+len, buf} = b
+  +m = count(sep, 0)
+  split.if(Bool.or(U32.is_eq(m, 0), U32.is_lt(len, m)), len, buf, sep, m)
 
 # Compares whole words; same tells whether the previous pair matched.
 def eq.go(n: Nat, same: Bool, r: Array<U32> & U32, s: Array<U32> & U32, +i: U32) -> Array<U32> & Array<U32> & Bool:
@@ -340,3 +513,188 @@ def eq(a: Bytes, b: Bytes) -> Bytes & Bytes & Bool:
   Bytes{+la, xa} = a
   Bytes{+lb, ya} = b
   eq.len(U32.is_eq(la, lb), la, xa, lb, ya)
+
+# Byte 0 of w becomes the most significant, so words compare in byte order.
+def bswap(+w: U32) -> U32:
+  ((b8(w) << 24n) .|. (b8(U32.shrn(w, 8n)) << 16n) .|. (b8(U32.shrn(w, 16n)) << 8n) .|. U32.shrn(w, 24n) : U32)
+
+# Compares whole words; c is the previous pair's order.
+def cmp.go(n: Nat, c: Cmp, r: Array<U32> & U32, s: Array<U32> & U32, +i: U32) -> Array<U32> & Array<U32> & Cmp:
+  match n:
+    case 0n:
+      (x, v) = r
+      (y, w) = s
+      (x, y, c)
+    case 1n+p:
+      match c:
+        case LT{}:
+          (x, v) = r
+          (y, w) = s
+          (x, y, LT{})
+        case GT{}:
+          (x, v) = r
+          (y, w) = s
+          (x, y, GT{})
+        case EQ{}:
+          (x, +v) = r
+          (y, +w) = s
+          cmp.go(p, U32.cmp(bswap(v), bswap(w)), Array.get(U32, x, (i + 1 : U32)), Array.get(U32, y, (i + 1 : U32)), (i + 1 : U32))
+
+def cmp.len(c: Cmp, +la: U32, +lb: U32) -> Cmp:
+  match c:
+    case EQ{}:
+      U32.cmp(la, lb)
+    case LT{}:
+      LT{}
+    case GT{}:
+      GT{}
+
+def cmp.fin(+la: U32, +lb: U32, r: Array<U32> & Array<U32> & Cmp) -> Bytes & Bytes & Cmp:
+  (x, y, c) = r
+  (Bytes{la, x}, Bytes{lb, y}, cmp.len(c, la, lb))
+
+# Both buffers back, and their order byte by byte; a prefix sorts first.
+# The shorter buffer's bytes past its len are 0, so its last word compares low when only the longer one goes on.
+def cmp(a: Bytes, b: Bytes) -> Bytes & Bytes & Cmp:
+  Bytes{+la, xa} = a
+  Bytes{+lb, ya} = b
+  cmp.fin(la, lb, cmp.go(U32.to_nat(words(U32.min(la, lb))), EQ{}, Array.get(U32, xa, 0), Array.get(U32, ya, 0), 0))
+
+def nibble(+n: U32) -> Char:
+  Chr{Bool.pick(U32, U32.is_lt(n, 10), (48 + n : U32), (87 + n : U32))}
+
+def hex.go(n: Nat, r: Array<U32> & U32, +i: U32, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      (a, +v) = r
+      hex.go(p, peek(a, (i - 1 : U32)), (i - 1 : U32), SCon{nibble(U32.shrn(v, 4n)), SCon{nibble((v .&. 15 : U32)), acc}})
+
+# Two lowercase hex digits per byte.
+def to_hex(b: Bytes) -> String:
+  Bytes{+len, buf} = b
+  hex.go(U32.to_nat(len), peek(buf, (len - 1 : U32)), (len - 1 : U32), SNil{})
+
+def in(+lo: U32, +c: U32, +hi: U32) -> Bool:
+  Bool.and(U32.is_le(lo, c), U32.is_le(c, hi))
+
+# A hex digit's value, or 16.
+def unnibble(+c: U32) -> U32:
+  Bool.pick(U32, in(48, c, 57), (c - 48 : U32), Bool.pick(U32, in(97, c, 102), (c - 87 : U32), Bool.pick(U32, in(65, c, 70), (c - 55 : U32), 16)))
+
+def poke.when(write: Bool, a: Array<U32>, +i: U32, +v: U32) -> Array<U32>:
+  match write:
+    case True{}:
+      poke(a, i, v)
+    case False{}:
+      a
+
+# hi is the previous digit; an odd i completes a byte.
+def unhex.go(s: String, a: Array<U32>, +i: U32, +hi: U32, +ok: Bool) -> Array<U32> & Bool:
+  match s:
+    case SNil{}:
+      (a, ok)
+    case SCon{Chr{+c}, t}:
+      +d = unnibble(c)
+      unhex.go(t, poke.when(U32.is_eq((i .&. 1 : U32), 1), a, (i >> 1n : U32), ((hi << 4n) .|. d : U32)), (i + 1 : U32), d, Bool.and(ok, U32.is_lt(d, 16)))
+
+def decoded(+n: U32, r: Array<U32> & Bool) -> Maybe<&1, Bytes>:
+  (a, ok) = r
+  match ok:
+    case True{}:
+      Some{Bytes{n, a}}
+    case False{}:
+      None{}
+
+def unhex.if(even: Bool, +s: String, +n: U32) -> Maybe<&1, Bytes>:
+  match even:
+    case True{}:
+      decoded((n >> 1n : U32), unhex.go(s, alloc((n >> 1n : U32)), 0, 0, True{}))
+    case False{}:
+      None{}
+
+# Hex digits, either case, to bytes. None for an odd count or a non-hex char.
+def from_hex(+s: String) -> Maybe<&1, Bytes>:
+  +n = count(s, 0)
+  unhex.if(U32.is_eq((n .&. 1 : U32), 0), s, n)
+
+# RFC 4648 §4: the standard alphabet, padded with '='.
+def b64.char(+i: U32) -> U32:
+  Bool.pick(U32, U32.is_lt(i, 26), (65 + i : U32), Bool.pick(U32, U32.is_lt(i, 52), (71 + i : U32), Bool.pick(U32, U32.is_lt(i, 62), (i - 4 : U32), Bool.pick(U32, U32.is_eq(i, 62), 43, 47))))
+
+# The six bits of v at k as a base64 char.
+def b64.at(+v: U32, +k: Nat) -> Char:
+  Chr{b64.char((U32.shrn(v, k) .&. 63 : U32))}
+
+# Groups of three bytes, last first; r holds the 24 bits of the group at i.
+def b64.go(n: Nat, r: Array<U32> & U32, +i: U32, acc: String) -> String:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      (a, +v) = r
+      +j = (i - 3 : U32)
+      b64.go(p, uint.go(3n, peek(a, j), j, True{}, 0), j, SCon{b64.at(v, 18n), SCon{b64.at(v, 12n), SCon{b64.at(v, 6n), SCon{b64.at(v, 0n), acc}}}})
+
+# The rem < 3 bytes after the last whole group, then the groups before them.
+def b64.tail(+rem: U32, +t: U32, +q: U32, r: Array<U32> & U32) -> String:
+  (a, +v0) = r
+  +v = U32.shln(v0, U32.to_nat(((3 - rem) * 8 : U32)))
+  +end = Bool.pick(String, U32.is_eq(rem, 0), "", Bool.pick(String, U32.is_eq(rem, 1), SCon{b64.at(v, 18n), SCon{b64.at(v, 12n), "=="}}, SCon{b64.at(v, 18n), SCon{b64.at(v, 12n), SCon{b64.at(v, 6n), "="}}}))
+  +j = (t - 3 : U32)
+  b64.go(U32.to_nat(q), uint.go(3n, peek(a, j), j, True{}, 0), j, end)
+
+# Base64 (RFC 4648 §4) with '=' padding.
+def to_base64(b: Bytes) -> String:
+  Bytes{+len, buf} = b
+  +q = (len / 3 : U32)
+  +t = (q * 3 : U32)
+  b64.tail((len - t : U32), t, q, uint.go(U32.to_nat((len - t : U32)), peek(buf, t), t, True{}, 0))
+
+# A base64 char's value, 64 for '=', or 65.
+def b64.val(+c: U32) -> U32:
+  Bool.pick(U32, in(65, c, 90), (c - 65 : U32), Bool.pick(U32, in(97, c, 122), (c - 71 : U32), Bool.pick(U32, in(48, c, 57), (c + 4 : U32), Bool.pick(U32, U32.is_eq(c, 43), 62, Bool.pick(U32, U32.is_eq(c, 47), 63, Bool.pick(U32, U32.is_eq(c, 61), 64, 65))))))
+
+# The count of '=' at the end of s.
+def b64.pads(s: String, +run: U32) -> U32:
+  match s:
+    case SNil{}:
+      run
+    case SCon{Chr{+c}, t}:
+      b64.pads(t, Bool.pick(U32, U32.is_eq(c, 61), (run + 1 : U32), 0))
+
+# A whole group of four chars writes its bytes at o, as many as fit before len.
+def b64.put(full: Bool, a: Array<U32>, +o: U32, +w: U32, +v: U32) -> Array<U32>:
+  match full:
+    case True{}:
+      put.go(U32.to_nat(w), a, (o + w - 1 : U32), False{}, U32.shrn(v, U32.to_nat(((3 - w) * 8 : U32))))
+    case False{}:
+      a
+
+# v collects six bits per char. '=' is allowed only at body and after.
+def unb64.go(s: String, a: Array<U32>, +i: U32, +v: U32, +ok: Bool, +len: U32, +body: U32) -> Array<U32> & Bool:
+  match s:
+    case SNil{}:
+      (a, ok)
+    case SCon{Chr{+c}, t}:
+      +d = b64.val(c)
+      +v2 = ((v << 6n) .|. (d .&. 63) : U32)
+      +o = ((i >> 2n) * 3 : U32)
+      +good = Bool.pick(Bool, U32.is_lt(i, body), U32.is_lt(d, 64), U32.is_eq(d, 64))
+      unb64.go(t, b64.put(U32.is_eq((i .&. 3 : U32), 3), a, o, U32.min(3, (len - o : U32)), v2), (i + 1 : U32), v2, Bool.and(ok, good), len, body)
+
+def unb64.if(ok: Bool, +s: String, +n: U32, +pads: U32) -> Maybe<&1, Bytes>:
+  match ok:
+    case True{}:
+      +len = ((n >> 2n) * 3 - pads : U32)
+      decoded(len, unb64.go(s, alloc(len), 0, 0, True{}, len, (n - pads : U32)))
+    case False{}:
+      None{}
+
+# Padded base64 (RFC 4648 §4) to bytes. None for a length that is not a multiple of 4,
+# more than two '=', '=' before the end, or a char outside the alphabet.
+def from_base64(+s: String) -> Maybe<&1, Bytes>:
+  +n = count(s, 0)
+  +pads = b64.pads(s, 0)
+  unb64.if(Bool.and(U32.is_eq((n .&. 3 : U32), 0), U32.is_le(pads, 2)), s, n, pads)
