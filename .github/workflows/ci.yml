@@ -35,7 +35,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 20
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'publish' || github.run_id }}-${{ matrix.package }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -48,6 +51,18 @@ jobs:
         run: |
           export PATH="$HOME/.bend/bin:$PATH"
           scripts/check.sh ${{ matrix.package }}
+      - name: Compare ${{ matrix.package }} with the hub
+        if: github.event_name == 'pull_request'
+        run: scripts/publish.sh --check ${{ matrix.package }}
+      - name: Publish ${{ matrix.package }}
+        if: github.event_name == 'push'
+        env:
+          BEND_KEY: ${{ secrets.BEND_KEY }}
+          BEND_LOGIN: ${{ secrets.BEND_LOGIN }}
+        run: |
+          export PATH="$HOME/.bend/bin:$PATH"
+          jq -n '{key: env.BEND_KEY, login: env.BEND_LOGIN}' > ~/.bend/bender.json
+          scripts/publish.sh ${{ matrix.package }}
 
   smoke:
     needs: changes

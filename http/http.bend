@@ -1,12 +1,12 @@
 # HTTP/1.1 client and server for http and https, with DNS and TLS. Source: https://github.com/paymog/bend-kit/tree/main/http
 import Base
-# By hash: bend-kit-wire@0.4.0.0, -url@0.4.0.0, -encoding@0.2.1.0, -json@0.3.0.0, -bytes@0.2.0.0, -dns@0.3.1.0, -zlib@0.1.0.0.
-import 0x8a1034c8824c5fdecbaa2e3d762aadad/wire.bend as Wire
+# By hash: bend-kit-wire@0.4.0.2, -url@0.4.0.0, -encoding@0.2.1.0, -json@0.3.0.0, -bytes@0.2.0.0, -dns@0.3.1.1, -zlib@0.1.0.0.
+import 0xb481bb64f1136053b0a6b2c6da6277ab/wire.bend as Wire
 import 0xd248560355ba8929ae030bc9c72f40be/url.bend as Url
 import 0xaec630f7a2f6b6ef96750f95d6e4195b/encoding.bend as Enc
 import 0xaaa10a97bf5ac6990143da2c863f8a3f/json.bend as Json
 import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
-import 0xa12defba527c5f86a84d6fb74968f8ef/dns.bend as Dns
+import 0xef7fb3464d57d2b70573cabf3289c442/dns.bend as Dns
 import 0xe01785b64266bf3ba0068183b9f9f5e3/zlib.bend as Zlib
 
 # HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
@@ -14,7 +14,7 @@ import 0xe01785b64266bf3ba0068183b9f9f5e3/zlib.bend as Zlib
 # Bodies are Bytes. The String parsers below are the spec: one Char per octet.
 # fetch reads until frame() says the response is whole. It returns Result, not Maybe.
 # Build with -o for big bodies: the `bend file.bend` runner overflows on ~30 KB strings; native binaries do not.
-#   import bend-kit-http@0.14.0.0/http.bend as Http
+#   import bend-kit-http@0.14.0.1/http.bend as Http
 
 type Req is Type:
   Req{method: String, path: String, headers: Map<&2, List<&2, String>>, body: Bytes.Bytes}

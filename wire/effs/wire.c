@@ -7,21 +7,21 @@
 #define WIRE_BYTES
 
 static Term wire_bytes(Env e, const char* p, u64 n) {
-  Term s    = term_pak(CID_SNIL, 0);
+  Term s    = term_pak(CID(SNil), 0);
   Loc  hole = 0;
   for (u64 i = 0; i < n; i += 1) {
     Loc  l = heap_alloc(e, 1);
-    Term t = term_ctr(CID_SCON, l);
+    Term t = term_ctr(CID(SCon), l);
     e.mem[l] = (uint8_t)p[i];
     if (hole == 0) {
       s = t;
     } else {
-      e.mem[hole] = io_seal(e, t, CID_SCON);
+      e.mem[hole] = io_seal(e, t, CID(SCon));
     }
     hole = l + 1;
   }
   if (hole != 0) {
-    e.mem[hole] = io_seal(e, term_pak(CID_SNIL, 0), CID_SCON);
+    e.mem[hole] = io_seal(e, term_pak(CID(SNil), 0), CID(SCon));
   }
   return s;
 }
@@ -32,7 +32,7 @@ static char* wire_octets(Env e, Term s, u64* len, bool* bad) {
   u64   n   = 0;
   char* buf = io_mem(malloc(cap));
   *bad = false;
-  while (term_aux(s) == CID_SCON) {
+  while (term_aux(s) == CID(SCon)) {
     Term fb[2];
     spare_free(e, cls_fit(2), ctr_take(e, s, 2, fb));
     if (n + 1 > cap) {
@@ -94,7 +94,7 @@ static bool wire_late(u64 at) {
 
 #endif
 
-#if defined(CID_RECV) || defined(CID_RECV_WORDS)
+#if defined(CID(recv)) || defined(CID(recv.words))
 
 // Not IO_READ: that would wait for readability before run, with no deadline.
 // w->size holds the deadline until the read lands.
@@ -122,7 +122,7 @@ static void wire_recv_init(Term* f, IoWork* w) {
 
 #endif
 
-#ifdef CID_RECV
+#ifdef CID(recv)
 
 static Term wire_recv_more(Env e, IoWork* w) {
   return wire_recv_go(e, w, wire_recv_more, false);
@@ -134,12 +134,12 @@ Term wire_recv_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_recv_use(void) {
-  io_eff(CID_RECV, wire_recv_run, 0);
+  io_eff(CID(recv), wire_recv_run, 0);
 }
 
 #endif
 
-#ifdef CID_RECV_WORDS
+#ifdef CID(recv.words)
 
 static Term wire_recv_words_more(Env e, IoWork* w) {
   return wire_recv_go(e, w, wire_recv_words_more, true);
@@ -151,12 +151,12 @@ Term wire_recv_words_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_recv_words_use(void) {
-  io_eff(CID_RECV_WORDS, wire_recv_words_run, 0);
+  io_eff(CID(recv.words), wire_recv_words_run, 0);
 }
 
 #endif
 
-#if defined(CID_SEND) || defined(CID_SEND_WORDS)
+#if defined(CID(send)) || defined(CID(send.words))
 
 static Term wire_send_more(Env e, IoWork* w) {
   int fd = (int)w->hand;
@@ -168,14 +168,14 @@ static Term wire_send_more(Env e, IoWork* w) {
     w->made += io_sys_end(w, n);
   }
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID(Unit), 0));
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
 }
 
 #endif
 
-#ifdef CID_SEND
+#ifdef CID(send)
 
 Term wire_send_run(Env e, Term* f, IoWork* w) {
   bool bad;
@@ -187,12 +187,12 @@ Term wire_send_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_send_use(void) {
-  io_eff(CID_SEND, wire_send_run, 0);
+  io_eff(CID(send), wire_send_run, 0);
 }
 
 #endif
 
-#ifdef CID_SEND_WORDS
+#ifdef CID(send.words)
 
 Term wire_send_words_run(Env e, Term* f, IoWork* w) {
   bool bad;
@@ -204,12 +204,12 @@ Term wire_send_words_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_send_words_use(void) {
-  io_eff(CID_SEND_WORDS, wire_send_words_run, 0);
+  io_eff(CID(send.words), wire_send_words_run, 0);
 }
 
 #endif
 
-#ifdef CID_RECV_FROM
+#ifdef CID(recv_from)
 
 static Term wire_recv_from_more(Env e, IoWork* w) {
   struct sockaddr_in at = { 0 };
@@ -241,12 +241,12 @@ Term wire_recv_from_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_recv_from_use(void) {
-  io_eff(CID_RECV_FROM, wire_recv_from_run, 0);
+  io_eff(CID(recv_from), wire_recv_from_run, 0);
 }
 
 #endif
 
-#ifdef CID_SEND_TO
+#ifdef CID(send_to)
 
 static Term wire_send_to_more(Env e, IoWork* w) {
   struct sockaddr_in at;
@@ -261,7 +261,7 @@ static Term wire_send_to_more(Env e, IoWork* w) {
     return io_wait_on(w, fd, POLLOUT, 0, wire_send_to_more);
   }
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID(Unit), 0));
   free(w->text);
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
@@ -279,12 +279,12 @@ Term wire_send_to_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) wire_send_to_use(void) {
-  io_eff(CID_SEND_TO, wire_send_to_run, 0);
+  io_eff(CID(send_to), wire_send_to_run, 0);
 }
 
 #endif
 
-#ifdef CID_CONNECT
+#ifdef CID(connect)
 
 // Base's TCP.connect waits as long as the kernel does (~75 s); this one has a
 // deadline. On each wake SO_ERROR reports a failure, and connect() again says
@@ -344,7 +344,7 @@ Term connect_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) connect_use(void) {
-  io_eff(CID_CONNECT, connect_run, 0);
+  io_eff(CID(connect), connect_run, 0);
 }
 
 #endif
@@ -355,8 +355,8 @@ static void __attribute__((constructor)) connect_use(void) {
 // object of a socket lives in a table keyed by its fd. Peer verification
 // (chain + host name) is always on; TLS 1.2 is the floor.
 
-#if defined(CID_TLS_CONNECT) || defined(CID_TLS_SEND) || defined(CID_TLS_RECV) || defined(CID_TLS_CLOSE) \
-  || defined(CID_TLS_SEND_WORDS) || defined(CID_TLS_RECV_WORDS)
+#if defined(CID(tls.connect)) || defined(CID(tls.send)) || defined(CID(tls.recv)) || defined(CID(tls.close)) \
+  || defined(CID(tls.send.words)) || defined(CID(tls.recv.words))
 #ifndef WIRE_TLS
 #define WIRE_TLS
 #include <dlfcn.h>
@@ -455,7 +455,7 @@ static void wire_tls_drop(int fd) {
 #endif
 #endif
 
-#ifdef CID_TLS_CONNECT
+#ifdef CID(tls.connect)
 
 static Term wire_tls_connect_end(Env e, IoWork* w, Term r) {
   free(w->text);
@@ -472,7 +472,7 @@ static Term wire_tls_connect_more(Env e, IoWork* w) {
   void* ssl = wire_tls_of(fd);
   int   r   = wire_tls.connect(ssl);
   if (r == 1) {
-    return wire_tls_connect_end(e, w, io_done(e, term_pak(CID_UNIT, 0)));
+    return wire_tls_connect_end(e, w, io_done(e, term_pak(CID(Unit), 0)));
   }
   int err = wire_tls.get_error(ssl, r);
   if (err == 2 || err == 3) {  // SSL_ERROR_WANT_READ, SSL_ERROR_WANT_WRITE
@@ -511,12 +511,12 @@ Term tls_connect_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tls_connect_use(void) {
-  io_eff(CID_TLS_CONNECT, tls_connect_run, 0);
+  io_eff(CID(tls.connect), tls_connect_run, 0);
 }
 
 #endif
 
-#if defined(CID_TLS_SEND) || defined(CID_TLS_SEND_WORDS)
+#if defined(CID(tls.send)) || defined(CID(tls.send.words))
 
 // SSL_write is retried with the same buffer, as OpenSSL requires.
 static Term wire_tls_send_more(Env e, IoWork* w) {
@@ -540,14 +540,14 @@ static Term wire_tls_send_more(Env e, IoWork* w) {
     w->code = EPIPE;
   }
   Term r = w->code != 0 ? io_fail(e, w->code, NULL)
-    : io_done(e, term_pak(CID_UNIT, 0));
+    : io_done(e, term_pak(CID(Unit), 0));
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
 }
 
 #endif
 
-#ifdef CID_TLS_SEND
+#ifdef CID(tls.send)
 
 Term tls_send_run(Env e, Term* f, IoWork* w) {
   bool bad;
@@ -559,12 +559,12 @@ Term tls_send_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tls_send_use(void) {
-  io_eff(CID_TLS_SEND, tls_send_run, 0);
+  io_eff(CID(tls.send), tls_send_run, 0);
 }
 
 #endif
 
-#ifdef CID_TLS_SEND_WORDS
+#ifdef CID(tls.send.words)
 
 Term tls_send_words_run(Env e, Term* f, IoWork* w) {
   bool bad;
@@ -576,12 +576,12 @@ Term tls_send_words_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tls_send_words_use(void) {
-  io_eff(CID_TLS_SEND_WORDS, tls_send_words_run, 0);
+  io_eff(CID(tls.send.words), tls_send_words_run, 0);
 }
 
 #endif
 
-#if defined(CID_TLS_RECV) || defined(CID_TLS_RECV_WORDS)
+#if defined(CID(tls.recv)) || defined(CID(tls.recv.words))
 
 // Empty means close_notify. A bare EOF is a read error, not a clean close.
 static Term wire_tls_recv_go(Env e, IoWork* w, IoPack more, bool words) {
@@ -599,7 +599,7 @@ static Term wire_tls_recv_go(Env e, IoWork* w, IoPack more, bool words) {
       }
       err = -1;
     }
-    r = err == 6 ? io_done(e, words ? wire_words(e, w->data, 0) : term_pak(CID_SNIL, 0))  // SSL_ERROR_ZERO_RETURN
+    r = err == 6 ? io_done(e, words ? wire_words(e, w->data, 0) : term_pak(CID(SNil), 0))  // SSL_ERROR_ZERO_RETURN
       : err == -1 ? io_fail(e, ETIMEDOUT, NULL)
       : io_fail(e, ssl != NULL ? EIO : EBADF, ssl != NULL ? "TLS read failed" : NULL);
   }
@@ -616,7 +616,7 @@ static void wire_tls_recv_init(Term* f, IoWork* w) {
 
 #endif
 
-#ifdef CID_TLS_RECV
+#ifdef CID(tls.recv)
 
 static Term wire_tls_recv_more(Env e, IoWork* w) {
   return wire_tls_recv_go(e, w, wire_tls_recv_more, false);
@@ -628,12 +628,12 @@ Term tls_recv_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tls_recv_use(void) {
-  io_eff(CID_TLS_RECV, tls_recv_run, 0);
+  io_eff(CID(tls.recv), tls_recv_run, 0);
 }
 
 #endif
 
-#ifdef CID_TLS_RECV_WORDS
+#ifdef CID(tls.recv.words)
 
 static Term wire_tls_recv_words_more(Env e, IoWork* w) {
   return wire_tls_recv_go(e, w, wire_tls_recv_words_more, true);
@@ -645,12 +645,12 @@ Term tls_recv_words_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) tls_recv_words_use(void) {
-  io_eff(CID_TLS_RECV_WORDS, tls_recv_words_run, 0);
+  io_eff(CID(tls.recv.words), tls_recv_words_run, 0);
 }
 
 #endif
 
-#ifdef CID_TLS_CLOSE
+#ifdef CID(tls.close)
 
 // ponytail: one non-blocking close_notify attempt; no wait for the peer's
 Term tls_close_run(Env e, Term* f, IoWork* w) {
@@ -661,11 +661,11 @@ Term tls_close_run(Env e, Term* f, IoWork* w) {
     wire_tls_drop(fd);
   }
   close(fd);
-  return term_pak(CID_UNIT, 0);
+  return term_pak(CID(Unit), 0);
 }
 
 static void __attribute__((constructor)) tls_close_use(void) {
-  io_eff(CID_TLS_CLOSE, tls_close_run, 0);
+  io_eff(CID(tls.close), tls_close_run, 0);
 }
 
 #endif

@@ -1,10 +1,10 @@
 # DNS A-record lookup over UDP. Source: https://github.com/paymog/bend-kit/tree/main/dns
 import Base
-# bend-kit-wire@0.4.0.0
-import 0x8a1034c8824c5fdecbaa2e3d762aadad/wire.bend as Wire
+# bend-kit-wire@0.4.0.2
+import 0xb481bb64f1136053b0a6b2c6da6277ab/wire.bend as Wire
 
 # DNS A-record lookup (RFC 1035) over UDP. Messages are byte strings.
-#   import bend-kit-dns@0.3.1.0/dns.bend as Dns
+#   import bend-kit-dns@0.3.1.1/dns.bend as Dns
 
 type Cur is Data:
   Cur{v: U32, rest: String}
@@ -435,35 +435,35 @@ def conf.text(r: Result<&1, &1, U32 & String, String>) -> String:
       s
 
 # ponytail: 3 nameservers; a longer resolv.conf ignores the rest
-def resolve.3(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
+def resolve.n3(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
   match xs:
     case Nil{}:
       none()
     case Con{+ns, t}:
       resolve.at(name, ns)
 
-def resolve.2b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+def resolve.n2b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   match ip:
     case Some{s}:
       IO.pure(Maybe<&2, String>, Some{s})
     case None{}:
-      resolve.3(name, rest)
+      resolve.n3(name, rest)
 
-def resolve.2(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
+def resolve.n2(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
   match xs:
     case Nil{}:
       none()
     case Con{+ns, t}:
       do IO<Maybe<&2, String>>:
         ip : Maybe<&2, String> <- resolve.at(name, ns)
-        resolve.2b(name, t, ip)
+        resolve.n2b(name, t, ip)
 
-def resolve.1b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
+def resolve.n1b(+name: String, rest: List<&2, String>, ip: Maybe<&2, String>) -> IO(Maybe<&2, String>):
   match ip:
     case Some{s}:
       IO.pure(Maybe<&2, String>, Some{s})
     case None{}:
-      resolve.2(name, rest)
+      resolve.n2(name, rest)
 
 def resolve.list(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
   match xs:
@@ -472,7 +472,7 @@ def resolve.list(+name: String, xs: List<&2, String>) -> IO(Maybe<&2, String>):
     case Con{+ns, t}:
       do IO<Maybe<&2, String>>:
         ip : Maybe<&2, String> <- resolve.at(name, ns)
-        resolve.1b(name, t, ip)
+        resolve.n1b(name, t, ip)
 
 def resolve.read(name: String, m: File & Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, String>):
   (f, r) = m

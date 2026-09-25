@@ -31,10 +31,21 @@ A name and its hash import the same package. Packages that depend on each other 
 | [`router`](router) | `0xf2239decc78af956c471ebf7f2f50374/router.bend` | Match an HTTP method and path to a handler. |
 | [`files`](files) | `./files/files.bend` (local; not yet published) | POSIX path operations, directory listing, metadata, mkdir, remove, rename, and private temp directories. |
 | [`collections`](collections) | `./collections/collections.bend` (local; not yet published) | An ordered map and set keyed by any `Data` type, a growable vector, a deque, and a priority queue. Import the file you need: `omap.bend`, `vec.bend`, `deque.bend`, or `heap.bend`. |
+| [`unicode`](unicode) | `./unicode/unicode.bend` (local; not yet published) | Unicode 17.0 general category, NFC/NFD, full case folding, and grapheme clusters. See [unicode/README.md](unicode/README.md). |
 
 The hub versions are `bytes@0.2.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@0.1.0.0`, `url@0.4.0.0`, `wire@0.4.0.0`, `dns@0.3.1.0`, `http@0.14.0.0`, and `router@0.1.1.0`, each named `bend-kit-<package>`.
 
 `wire`, `http`, and `files` ship `.c` and `.js` effects. They run host code, and proofs do not cover them.
+
+The unpublished [`process`](process) package runs commands without a shell, captures
+byte-exact stdin/stdout/stderr and exit status, and exposes streaming pipes and
+process-level OS effects. Import `./process/process.bend` locally; its `env`
+entries are `KEY=VALUE` overrides of the inherited environment. Close the
+spawned child's stdin to send EOF, drain stdout and stderr, then call `wait`.
+Its C and JS effects require macOS or Linux and are not covered by the proofs.
+On the JS target, `run` blocks other Bend fibers until the child exits; use
+`spawn` and pipe handles when the program must remain responsive. JS signal
+polling uses Bun's built-in FFI C compiler to install a signal-safe handler.
 
 ## Layout
 
@@ -43,6 +54,7 @@ Each package is one folder at the root. The folder name is the package name:
 ```
 <package>/
   <package>.bend   entry file; its first comment line is the hub description
+  VERSION          the hub version; CI publishes it on merge
   LAWS.bend        the claims
   PROOF.bend       a proof of each claim
   check.bend       runs the package on the native runtime (optional)
@@ -63,3 +75,5 @@ scripts/packages.sh origin/main   # the packages changed since origin/main
 `check.sh` type-checks the entry file, then runs `PROOF.bend` and `check.bend` in the package folder. `bend PROOF.bend` prints "All terms check." when every law holds.
 
 CI runs `check.sh` once for each package that a pull request changes. A change to `.github/` or `scripts/` checks every package, and so does each push to `main`. The `http` smoke tests run only when `http` changes.
+
+On each push to `main`, a package that passes its checks runs `scripts/publish.sh`. It publishes the package as `bend-kit-<package>@<VERSION>` unless that version is already on the hub. If the hub has that version with different files, the job fails, and the package needs a higher `VERSION`. Pull requests run `scripts/publish.sh --check`, which reports the same failure and publishes nothing.
