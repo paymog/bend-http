@@ -1,6 +1,6 @@
 import Base
 import ./http.bend as Http
-import 0xdcce81c809e7aeb2e2c2fb775d28e0dc/bytes.bend as Bytes
+import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
 
 def show_req(req: Http.Req) -> IO(Unit):
   Http.Req{method, path, headers, body} = req

@@ -1,8 +1,8 @@
 import Base
 import ./http.bend as Http
-import 0x3f15daecd30cac66472f8e312600ba3b/url.bend as Url
-import 0x2213bb53d5eea36896815fc5b459bb6e/json.bend as Json
-import 0xdcce81c809e7aeb2e2c2fb775d28e0dc/bytes.bend as Bytes
+import 0xd248560355ba8929ae030bc9c72f40be/url.bend as Url
+import 0xaaa10a97bf5ac6990143da2c863f8a3f/json.bend as Json
+import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
 
 # LAW: the text after a blank line is the body.
 law body_after_blank:

@@ -1,4 +1,4 @@
-# UTF-8 and hex encoding for byte strings. Source: https://github.com/paymog/bend-net/tree/main/encoding
+# UTF-8 and hex encoding for byte strings. Source: https://github.com/paymog/bend-kit/tree/main/encoding
 import Base
 
 # Hex of each char as two nibbles. ASCII-oriented.

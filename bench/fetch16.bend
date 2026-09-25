@@ -2,7 +2,7 @@
 #   python3 dl.py 18094 &; ./fetch16 http://127.0.0.1:18094/cl
 import Base
 import ../http.bend as Http
-import 0xdcce81c809e7aeb2e2c2fb775d28e0dc/bytes.bend as Bytes
+import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
 
 def report(+t0: Nat, +t1: Nat, r: Result<&1, &1, Http.Err, Http.Res>) -> IO(Unit):
   match r:

@@ -1,4 +1,4 @@
-# JSON values, parsed and encoded as RFC 8259. Source: https://github.com/paymog/bend-net/tree/main/json
+# JSON values, parsed and encoded as RFC 8259. Source: https://github.com/paymog/bend-kit/tree/main/json
 import Base
 
 # JSON (RFC 8259) over text; decode bytes with Utf8 first. Nesting has no

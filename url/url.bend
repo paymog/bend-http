@@ -1,4 +1,4 @@
-# URL parsing, resolution, and percent-encoding (RFC 3986). Source: https://github.com/paymog/bend-net/tree/main/url
+# URL parsing, resolution, and percent-encoding (RFC 3986). Source: https://github.com/paymog/bend-kit/tree/main/url
 import Base
 
 # origin-form /path[?k=v] with RFC 3986 percent-encoding.
