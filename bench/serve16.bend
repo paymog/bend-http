@@ -2,10 +2,12 @@
 #   curl -s --data-binary @16m.bin http://127.0.0.1:18093/
 import Base
 import ../http.bend as Http
+import ../bytes/bytes.bend as Bytes
 
 def len(req: Http.Req) -> IO(Http.Res):
   Http.Req{method, path, headers, body} = req
-  IO.pure(Http.Res, Http.Res{200, Http.empty(), Nat.show(String.length(body))})
+  Bytes.Bytes{+n, buf} = body
+  IO.pure(Http.Res, Http.Res{200, Http.empty(), Bytes.from_string(U32.show(n))})
 
 def main() -> IO(Unit):
   Http.serve.with(~len, 18093, 33554432n)

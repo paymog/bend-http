@@ -1,5 +1,6 @@
 import Base
 import ./http.bend as Http
+import ./bytes/bytes.bend as Bytes
 
 def line(kind: String, url: String) -> IO(Unit):
   IO.print(kind ++ " " ++ url)
@@ -11,7 +12,7 @@ def ok_page.go(url: String, ok: Bool) -> IO(Unit):
     case False{}:
       line("fail", url)
 
-def ok_page(url: String, m: Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
+def ok_page(url: String, m: Result<&1, &1, Http.Err, Http.Res>) -> IO(Unit):
   match m:
     case Fail{e}:
       line("fail", url)
@@ -19,7 +20,7 @@ def ok_page(url: String, m: Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
       Http.Res{+status, headers, body} = res
       ok_page.go(url, U32.is_eq(status, 200))
 
-def ok_tls(url: String, m: Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
+def ok_tls(url: String, m: Result<&1, &1, Http.Err, Http.Res>) -> IO(Unit):
   match m:
     case Fail{e}:
       match e:
@@ -46,12 +47,12 @@ def ok_tls(url: String, m: Result<&2, &2, Http.Err, Http.Res>) -> IO(Unit):
 
 def page(+url: String) -> IO(Unit):
   do IO<Unit>:
-    m : Result<&2, &2, Http.Err, Http.Res> <- Http.fetch.with("GET", url, Http.empty(), "", 15000)
+    m : Result<&1, &1, Http.Err, Http.Res> <- Http.fetch.with("GET", url, Http.empty(), Bytes.new(0), 15000)
     ok_page(url, m)
 
 def tls(+url: String) -> IO(Unit):
   do IO<Unit>:
-    m : Result<&2, &2, Http.Err, Http.Res> <- Http.fetch.with("GET", url, Http.empty(), "", 15000)
+    m : Result<&1, &1, Http.Err, Http.Res> <- Http.fetch.with("GET", url, Http.empty(), Bytes.new(0), 15000)
     ok_tls(url, m)
 
 def main() -> IO(Unit):

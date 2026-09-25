@@ -597,3 +597,6 @@ def Laws.stream_chunk_end():
 
 def Laws.stream_len_cut():
   {==}
+
+def Laws.decoded_plain():
+  {==}
