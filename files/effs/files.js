@@ -48,7 +48,7 @@ function mkdir(path) {
   }
   try {
     require("fs").mkdirSync(got.p);
-    return io_done({ $: "Unit" });
+    return io_done({ $: CID(Unit) });
   } catch (e) {
     return files_err(e);
   }
@@ -65,7 +65,7 @@ function remove(path) {
     } else {
       fs.unlinkSync(got.p);
     }
-    return io_done({ $: "Unit" });
+    return io_done({ $: CID(Unit) });
   } catch (e) {
     return files_err(e);
   }
@@ -82,7 +82,7 @@ function rename(from, to) {
   }
   try {
     require("fs").renameSync(a.p, b.p);
-    return io_done({ $: "Unit" });
+    return io_done({ $: CID(Unit) });
   } catch (e) {
     return files_err(e);
   }
@@ -98,3 +98,9 @@ function temp_dir() {
   }
 }
 
+io_eff(CID(list_dir.raw), list_dir_raw);
+io_eff(CID(stat.raw), stat_raw);
+io_eff(CID(mkdir), mkdir);
+io_eff(CID(remove), remove);
+io_eff(CID(rename), rename);
+io_eff(CID(temp_dir), temp_dir);

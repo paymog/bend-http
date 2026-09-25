@@ -35,7 +35,7 @@ static u32 files_kind(mode_t m) {
 }
 
 static Term files_unit_done(Env e) {
-  return io_done(e, term_pak(CID_UNIT, 0));
+  return io_done(e, term_pak(CID(Unit), 0));
 }
 
 static Term files_unit_pack(Env e, IoWork* w) {
@@ -44,7 +44,7 @@ static Term files_unit_pack(Env e, IoWork* w) {
 
 #endif
 
-#ifdef CID_LIST_DIR_RAW
+#ifdef CID(list_dir.raw)
 
 static void files_list_grow(char** buf, u64* cap, u64 need) {
   if (need <= *cap) {
@@ -122,12 +122,12 @@ Term list_dir_raw_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) list_dir_raw_use(void) {
-  io_eff(CID_LIST_DIR_RAW, list_dir_raw_run, 0);
+  io_eff(CID(list_dir.raw), list_dir_raw_run, 0);
 }
 
 #endif
 
-#ifdef CID_STAT_RAW
+#ifdef CID(stat.raw)
 
 static void stat_raw_call(IoWork* w) {
   struct stat st;
@@ -158,12 +158,12 @@ Term stat_raw_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) stat_raw_use(void) {
-  io_eff(CID_STAT_RAW, stat_raw_run, 0);
+  io_eff(CID(stat.raw), stat_raw_run, 0);
 }
 
 #endif
 
-#ifdef CID_MKDIR
+#ifdef CID(mkdir)
 
 static void mkdir_call(IoWork* w) {
   io_sys_end(w, mkdir(w->data, 0777));
@@ -182,12 +182,12 @@ Term mkdir_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) mkdir_use(void) {
-  io_eff(CID_MKDIR, mkdir_run, 0);
+  io_eff(CID(mkdir), mkdir_run, 0);
 }
 
 #endif
 
-#ifdef CID_REMOVE
+#ifdef CID(remove)
 
 static void remove_call(IoWork* w) {
   io_sys_end(w, remove(w->data));
@@ -206,12 +206,12 @@ Term remove_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) remove_use(void) {
-  io_eff(CID_REMOVE, remove_run, 0);
+  io_eff(CID(remove), remove_run, 0);
 }
 
 #endif
 
-#ifdef CID_RENAME
+#ifdef CID(rename)
 
 static void rename_call(IoWork* w) {
   io_sys_end(w, rename(w->data, w->text));
@@ -237,12 +237,12 @@ Term rename_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) rename_use(void) {
-  io_eff(CID_RENAME, rename_run, 0);
+  io_eff(CID(rename), rename_run, 0);
 }
 
 #endif
 
-#ifdef CID_TEMP_DIR
+#ifdef CID(temp_dir)
 
 static void temp_dir_call(IoWork* w) {
   const char* base = getenv("TMPDIR");
@@ -284,7 +284,7 @@ Term temp_dir_run(Env e, Term* f, IoWork* w) {
 }
 
 static void __attribute__((constructor)) temp_dir_use(void) {
-  io_eff(CID_TEMP_DIR, temp_dir_run, 0);
+  io_eff(CID(temp_dir), temp_dir_run, 0);
 }
 
 #endif
