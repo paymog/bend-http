@@ -30,15 +30,15 @@ jobs:
           fi
           echo "packages=$(jq -Rnc '[inputs | select(length > 0)]' <<<"$pkgs")" >> "$GITHUB_OUTPUT"
           echo "http=$(grep -qx http <<<"$pkgs" && echo true || echo false)" >> "$GITHUB_OUTPUT"
-      - name: Require a VERSION bump for published changes
-        if: github.event_name == 'pull_request'
-        run: scripts/bumped.sh "origin/${{ github.base_ref }}"
 
   check:
     needs: changes
     if: needs.changes.outputs.packages != '[]'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    concurrency:
+      group: ${{ github.event_name == 'push' && 'publish' || github.run_id }}-${{ matrix.package }}
+      cancel-in-progress: false
     strategy:
       fail-fast: false
       matrix:
@@ -51,6 +51,9 @@ jobs:
         run: |
           export PATH="$HOME/.bend/bin:$PATH"
           scripts/check.sh ${{ matrix.package }}
+      - name: Compare ${{ matrix.package }} with the hub
+        if: github.event_name == 'pull_request'
+        run: scripts/publish.sh --check ${{ matrix.package }}
       - name: Publish ${{ matrix.package }}
         if: github.event_name == 'push'
         env:

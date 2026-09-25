@@ -64,4 +64,4 @@ scripts/packages.sh origin/main   # the packages changed since origin/main
 
 CI runs `check.sh` once for each package that a pull request changes. A change to `.github/` or `scripts/` checks every package, and so does each push to `main`. The `http` smoke tests run only when `http` changes.
 
-On each push to `main`, a package that passes its checks runs `scripts/publish.sh`. It publishes the package as `bend-kit-<package>@<VERSION>` unless that version is already on the hub. A pull request that changes a package's entry file or `effs/` must raise its `VERSION`; `scripts/bumped.sh` enforces this.
+On each push to `main`, a package that passes its checks runs `scripts/publish.sh`. It publishes the package as `bend-kit-<package>@<VERSION>` unless that version is already on the hub. If the hub has that version with different files, the job fails, and the package needs a higher `VERSION`. Pull requests run `scripts/publish.sh --check`, which reports the same failure and publishes nothing.
