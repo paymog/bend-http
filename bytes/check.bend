@@ -73,6 +73,36 @@ def rep(n: Nat, acc: String) -> String:
 def big() -> String:
   rep(10000n, "\r\n\r\n")
 
+# One byte at a time: with a new buffer per append this was O(n²).
+def build(n: Nat, acc: Bytes.Bytes) -> Bytes.Bytes:
+  match n:
+    case 0n:
+      acc
+    case 1n+p:
+      build(p, Bytes.append(acc, Bytes.set(Bytes.new(1), 0, 120)))
+
+def pieces(xs: List<&1, Bytes.Bytes>, +n: U32) -> U32:
+  match xs:
+    case Nil{}:
+      n
+    case Con{x, t}:
+      pieces(t, (n + 1 : U32))
+
+def yes(r: Bytes.Bytes & Bool) -> Bool:
+  (b, ok) = r
+  ok
+
+def order(r: Bytes.Bytes & Bytes.Bytes & Cmp) -> Cmp:
+  (a, b, c) = r
+  c
+
+def dec(m: Maybe<&1, Bytes.Bytes>) -> String:
+  match m:
+    case None{}:
+      "none"
+    case Some{b}:
+      str(b)
+
 def main() -> IO(Unit):
   do IO<Unit>:
     expect("roundtrip", String.eq(str(of("hello, world")), "hello, world"))
@@ -95,3 +125,13 @@ def main() -> IO(Unit):
     expect("slice 10 KB offset 1", String.eq(right(Bytes.slice(of(big()), 1, 10003)), String.drop(big(), 1n)))
     expect("slice 10 KB offset 3 eq", same(Bytes.eq(rightb(Bytes.slice(of(big()), 3, 10001)), of(String.drop(big(), 3n)))))
     expect("append 10 KB aligned", String.eq(str(Bytes.append(of(big()), of("wxyz"))), big() ++ "wxyz"))
+    expect("append 200 K one byte at a time", U32.is_eq(num(Bytes.length(build(200000n, Bytes.new(0)))), 200000))
+    expect("u32be 1 MB", has(val(Bytes.get.u32be(Bytes.set.u32be(Bytes.new(1000003), 999999, 3735928559), 999999)), 3735928559))
+    expect("u16le past 1 MB len", none(val(Bytes.get.u16le(Bytes.new(1000003), 1000002))))
+    expect("find.from 10 KB", has(val(Bytes.find.from(of(big()), "\r\n\r\n", 1)), 10000))
+    expect("rfind 10 KB", has(val(Bytes.rfind(of(big()), "a")), 9999))
+    expect("split 10 KB", U32.is_eq(pieces(Bytes.split(of(big()), "a"), 0), 10001))
+    expect("ends_with 10 KB", yes(Bytes.ends_with(of(big()), "a\r\n\r\n")))
+    expect("cmp 10 KB last byte", Cmp.is_lt(order(Bytes.cmp(of(big()), Bytes.set(of(big()), 10003, 11)))))
+    expect("hex 10 KB", String.eq(dec(Bytes.from_hex(Bytes.to_hex(of(big())))), big()))
+    expect("base64 10 KB", String.eq(dec(Bytes.from_base64(Bytes.to_base64(of(big())))), big()))

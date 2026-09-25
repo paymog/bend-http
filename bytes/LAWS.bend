@@ -190,3 +190,262 @@ law concat_pieces:
 
 law concat_none:
   {str(Bytes.concat([])) == "" : String}
+
+# append writes into the left buffer while it has room and copies when it grows.
+law append_in_room:
+  {str(Bytes.append(Bytes.append(of("ab"), of("c")), of("d"))) == "abcd" : String}
+
+law append_grows:
+  {str(Bytes.append(Bytes.append(Bytes.append(of("abc"), of("de")), of("fghi")), of("j"))) == "abcdefghij" : String}
+
+law eq_after_appends:
+  {same(Bytes.eq(Bytes.append(Bytes.append(of("a"), of("bc")), of("defgh")), of("abcdefgh"))) == True{} : Bool}
+
+# Integers in both byte orders, inside a word, across words, and past len.
+law u16be_at:
+  {val(Bytes.get.u16be(of(bytes([1, 2, 3])), 1)) == Some{515} : Maybe<&2, U32>}
+
+law u16le_at:
+  {val(Bytes.get.u16le(of(bytes([1, 2, 3])), 1)) == Some{770} : Maybe<&2, U32>}
+
+law u32be_across_words:
+  {val(Bytes.get.u32be(of(bytes([0, 1, 2, 3, 4, 5])), 1)) == Some{16909060} : Maybe<&2, U32>}
+
+law u32le_across_words:
+  {val(Bytes.get.u32le(of(bytes([0, 1, 2, 3, 4, 5])), 1)) == Some{67305985} : Maybe<&2, U32>}
+
+law u32be_top:
+  {val(Bytes.get.u32be(of(bytes([255, 255, 255, 255])), 0)) == Some{4294967295} : Maybe<&2, U32>}
+
+law u32_past_len:
+  {val(Bytes.get.u32le(of("abc"), 0)) == None{} : Maybe<&2, U32>}
+
+law u16_past_len:
+  {val(Bytes.get.u16be(of("abc"), 2)) == None{} : Maybe<&2, U32>}
+
+law set_u16be_at:
+  {str(Bytes.set.u16be(of("xxxx"), 1, 258)) == bytes([120, 1, 2, 120]) : String}
+
+law set_u16le_masks:
+  {str(Bytes.set.u16le(of("ab"), 0, 65601)) == bytes([65, 0]) : String}
+
+law set_u32be_across_words:
+  {str(Bytes.set.u32be(Bytes.new(6), 2, 16909060)) == bytes([0, 0, 1, 2, 3, 4]) : String}
+
+law set_u32le_across_words:
+  {str(Bytes.set.u32le(Bytes.new(6), 1, 16909060)) == bytes([0, 4, 3, 2, 1, 0]) : String}
+
+law set_u16_past_len:
+  {str(Bytes.set.u16le(of("abc"), 2, 0)) == "abc" : String}
+
+law u32le_roundtrip:
+  {val(Bytes.get.u32le(Bytes.set.u32le(Bytes.new(7), 3, 3735928559), 3)) == Some{3735928559} : Maybe<&2, U32>}
+
+law find_from_later:
+  {val(Bytes.find.from(of("abcabc"), "bc", 2)) == Some{4} : Maybe<&2, U32>}
+
+law find_from_at_start:
+  {val(Bytes.find.from(of("abcabc"), "bc", 1)) == Some{1} : Maybe<&2, U32>}
+
+law find_from_too_late:
+  {val(Bytes.find.from(of("abcabc"), "bc", 5)) == None{} : Maybe<&2, U32>}
+
+law find_from_empty_at_len:
+  {val(Bytes.find.from(of("ab"), "", 2)) == Some{2} : Maybe<&2, U32>}
+
+law find_from_past_len:
+  {val(Bytes.find.from(of("ab"), "", 3)) == None{} : Maybe<&2, U32>}
+
+law rfind_last:
+  {val(Bytes.rfind(of("abcabc"), "bc")) == Some{4} : Maybe<&2, U32>}
+
+law rfind_at_end:
+  {val(Bytes.rfind(of("abcabc"), "abc")) == Some{3} : Maybe<&2, U32>}
+
+law rfind_at_zero:
+  {val(Bytes.rfind(of("abcx"), "ab")) == Some{0} : Maybe<&2, U32>}
+
+law rfind_missing:
+  {val(Bytes.rfind(of("hello"), "lx")) == None{} : Maybe<&2, U32>}
+
+law rfind_too_long:
+  {val(Bytes.rfind(of("ab"), "abc")) == None{} : Maybe<&2, U32>}
+
+law rfind_empty:
+  {val(Bytes.rfind(of("ab"), "")) == Some{2} : Maybe<&2, U32>}
+
+def yes(r: Bytes.Bytes & Bool) -> Bool:
+  (b, ok) = r
+  ok
+
+law starts_with_method:
+  {yes(Bytes.starts_with(of("GET / HTTP/1.1"), "GET ")) == True{} : Bool}
+
+law starts_with_other:
+  {yes(Bytes.starts_with(of("GET / HTTP/1.1"), "GEX")) == False{} : Bool}
+
+law starts_with_too_long:
+  {yes(Bytes.starts_with(of("GE"), "GET")) == False{} : Bool}
+
+law starts_with_empty:
+  {yes(Bytes.starts_with(of(""), "")) == True{} : Bool}
+
+law ends_with_crlf:
+  {yes(Bytes.ends_with(of("abcde\r\n"), "\r\n")) == True{} : Bool}
+
+law ends_with_other:
+  {yes(Bytes.ends_with(of("abcde\r\n"), "e\n")) == False{} : Bool}
+
+law ends_with_too_long:
+  {yes(Bytes.ends_with(of("ab"), "xab")) == False{} : Bool}
+
+def strs(xs: List<&1, Bytes.Bytes>) -> List<&2, String>:
+  match xs:
+    case Nil{}:
+      Nil{}
+    case Con{x, t}:
+      Con{str(x), strs(t)}
+
+law split_fields:
+  {strs(Bytes.split(of("a,b,,c"), ",")) == ["a", "b", "", "c"] : List<&2, String>}
+
+law split_ends:
+  {strs(Bytes.split(of(",a,"), ",")) == ["", "a", ""] : List<&2, String>}
+
+# Matches do not overlap: the second "aa" in "aaa" starts inside the first.
+law split_no_overlap:
+  {strs(Bytes.split(of("aaa"), "aa")) == ["", "a"] : List<&2, String>}
+
+law split_lines:
+  {strs(Bytes.split(of("k: v\r\nx: y"), "\r\n")) == ["k: v", "x: y"] : List<&2, String>}
+
+law split_empty_sep:
+  {strs(Bytes.split(of("abc"), "")) == ["abc"] : List<&2, String>}
+
+law split_empty:
+  {strs(Bytes.split(of(""), ",")) == [""] : List<&2, String>}
+
+law split_sep_too_long:
+  {strs(Bytes.split(of("ab"), "abc")) == ["ab"] : List<&2, String>}
+
+def order(r: Bytes.Bytes & Bytes.Bytes & Cmp) -> Cmp:
+  (a, b, c) = r
+  c
+
+# Byte order, not word order: the first byte decides, and bytes are unsigned.
+law cmp_first_byte:
+  {order(Bytes.cmp(of("ba"), of("ab"))) == GT{} : Cmp}
+
+law cmp_last_byte:
+  {order(Bytes.cmp(of("abc"), of("abd"))) == LT{} : Cmp}
+
+law cmp_second_word:
+  {order(Bytes.cmp(of("abcde"), of("abcdf"))) == LT{} : Cmp}
+
+law cmp_unsigned:
+  {order(Bytes.cmp(of(bytes([255])), of(bytes([1])))) == GT{} : Cmp}
+
+law cmp_prefix:
+  {order(Bytes.cmp(of("ab"), of("abc"))) == LT{} : Cmp}
+
+# A 0 byte past the shorter one's end still makes the longer one greater.
+law cmp_zero_tail:
+  {order(Bytes.cmp(of(bytes([97, 98, 0])), of("ab"))) == GT{} : Cmp}
+
+law cmp_equal:
+  {order(Bytes.cmp(of("hello"), of("hello"))) == EQ{} : Cmp}
+
+def dec(m: Maybe<&1, Bytes.Bytes>) -> Maybe<&2, String>:
+  match m:
+    case None{}:
+      None{}
+    case Some{b}:
+      Some{str(b)}
+
+law to_hex_octets:
+  {Bytes.to_hex(of(bytes([0, 15, 16, 171, 255]))) == "000f10abff" : String}
+
+law to_hex_empty:
+  {Bytes.to_hex(of("")) == "" : String}
+
+law from_hex_either_case:
+  {dec(Bytes.from_hex("000F10abff")) == Some{bytes([0, 15, 16, 171, 255])} : Maybe<&2, String>}
+
+law from_hex_odd:
+  {dec(Bytes.from_hex("abc")) == None{} : Maybe<&2, String>}
+
+law from_hex_bad_char:
+  {dec(Bytes.from_hex("0g")) == None{} : Maybe<&2, String>}
+
+law from_hex_empty:
+  {dec(Bytes.from_hex("")) == Some{""} : Maybe<&2, String>}
+
+# RFC 4648 §10 test vectors.
+law base64_empty:
+  {Bytes.to_base64(of("")) == "" : String}
+
+law base64_f:
+  {Bytes.to_base64(of("f")) == "Zg==" : String}
+
+law base64_fo:
+  {Bytes.to_base64(of("fo")) == "Zm8=" : String}
+
+law base64_foo:
+  {Bytes.to_base64(of("foo")) == "Zm9v" : String}
+
+law base64_foob:
+  {Bytes.to_base64(of("foob")) == "Zm9vYg==" : String}
+
+law base64_fooba:
+  {Bytes.to_base64(of("fooba")) == "Zm9vYmE=" : String}
+
+law base64_foobar:
+  {Bytes.to_base64(of("foobar")) == "Zm9vYmFy" : String}
+
+law base64_high_octets:
+  {Bytes.to_base64(of(bytes([251, 255]))) == "+/8=" : String}
+
+law from_base64_f:
+  {dec(Bytes.from_base64("Zg==")) == Some{"f"} : Maybe<&2, String>}
+
+law from_base64_fo:
+  {dec(Bytes.from_base64("Zm8=")) == Some{"fo"} : Maybe<&2, String>}
+
+law from_base64_foobar:
+  {dec(Bytes.from_base64("Zm9vYmFy")) == Some{"foobar"} : Maybe<&2, String>}
+
+law from_base64_fooba:
+  {dec(Bytes.from_base64("Zm9vYmE=")) == Some{"fooba"} : Maybe<&2, String>}
+
+law from_base64_high_octets:
+  {dec(Bytes.from_base64("+/8=")) == Some{bytes([251, 255])} : Maybe<&2, String>}
+
+law from_base64_empty:
+  {dec(Bytes.from_base64("")) == Some{""} : Maybe<&2, String>}
+
+law from_base64_length:
+  {dec(Bytes.from_base64("Zg=")) == None{} : Maybe<&2, String>}
+
+law from_base64_inner_pad:
+  {dec(Bytes.from_base64("Zg=a")) == None{} : Maybe<&2, String>}
+
+law from_base64_three_pads:
+  {dec(Bytes.from_base64("Z===")) == None{} : Maybe<&2, String>}
+
+law from_base64_bad_char:
+  {dec(Bytes.from_base64("Zm9*")) == None{} : Maybe<&2, String>}
+
+# The last group writes only the bytes before len: 4 bytes fill one word, so a fifth would wrap onto byte 0.
+law from_base64_foob:
+  {dec(Bytes.from_base64("Zm9vYg==")) == Some{"foob"} : Maybe<&2, String>}
+
+def same.dec(m: Maybe<&1, Bytes.Bytes>, +s: String) -> Bool:
+  match m:
+    case None{}:
+      False{}
+    case Some{b}:
+      same(Bytes.eq(b, of(s)))
+
+# Pad bits that are not 0 are dropped (RFC 4648 §3.5 lets a decoder accept them), and stay out of the buffer.
+law from_base64_pad_bits:
+  {same.dec(Bytes.from_base64("Zh=="), "f") == True{} : Bool}
