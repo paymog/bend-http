@@ -35,6 +35,16 @@ The hub versions are `bytes@0.2.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@
 
 `wire`, `http`, and `files` ship `.c` and `.js` effects. They run host code, and proofs do not cover them.
 
+The unpublished [`process`](process) package runs commands without a shell, captures
+byte-exact stdin/stdout/stderr and exit status, and exposes streaming pipes and
+process-level OS effects. Import `./process/process.bend` locally; its `env`
+entries are `KEY=VALUE` overrides of the inherited environment. Close the
+spawned child's stdin to send EOF, drain stdout and stderr, then call `wait`.
+Its C and JS effects require macOS or Linux and are not covered by the proofs.
+On the JS target, `run` blocks other Bend fibers until the child exits; use
+`spawn` and pipe handles when the program must remain responsive. JS signal
+polling uses Bun's built-in FFI C compiler to install a signal-safe handler.
+
 ## Layout
 
 Each package is one folder at the root. The folder name is the package name:
