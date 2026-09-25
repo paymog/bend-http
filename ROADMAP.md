@@ -7,7 +7,7 @@ New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3`
 ## Current baseline
 
 - Packages on the Bend hub, published by hash and waiting for names: `bend-kit-http@0.14.0.0`, `bend-kit-bytes@0.3.0.0` (`0x49814d83de8f70993a43e1002be29ecd`; `http` still imports `0.2.0.0`), `bend-kit-wire@0.4.0.0`, `bend-kit-url@0.4.0.0`, `bend-kit-json@0.3.0.0`, `bend-kit-encoding@0.2.1.0`, `bend-kit-dns@0.3.1.0`, `bend-kit-zlib@0.1.0.0`, `bend-kit-router@0.1.1.0`. Each description links to its source folder. `http` and `dns` import their siblings by hash, so callers share their types.
-- Laws: http 176, url 57, json 40, bytes 122, zlib 14, dns 18, encoding 13, router 3. Run `scripts/check.sh` to check them all.
+- Laws: http 176, url 57, json 40, bytes 122, unicode 35, zlib 14, dns 18, encoding 13, router 3. Run `scripts/check.sh` to check them all.
 - Big bodies need a native build (`bend file.bend -o app`). The `bend file.bend` runner overflows on strings over about 30 KB.
 
 ### bytes
@@ -18,6 +18,10 @@ New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3`
 ### wire
 
 - `wire` holds the effects Base lacks: byte-exact TCP/UDP, a TCP connect with a deadline, and TLS through OpenSSL 3 loaded at run time (`BEND_LIBSSL` overrides the path). Each effect has a C and a JS version. The `.words` forms move bytes in the `bytes` layout, with no list cell per byte (`52ca321`).
+
+### unicode
+
+- `unicode` has Unicode 17.0.0 general category, canonical combining class, NFC and NFD, full case folding, and extended grapheme clusters, in pure Bend. `gen.py` generates the tables from the UCD. `conformance.py` passes every line of `NormalizationTest.txt` (NFC and NFD) and `GraphemeBreakTest.txt`. It is not published yet.
 
 ### http
 
@@ -42,7 +46,7 @@ New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3`
 - [ ] Integer types: U8, U16, U64, I32, I64 (#21)
 - [ ] Filesystem and paths (#22)
 - [ ] Process and OS (#23)
-- [ ] Generic collections (#24)
+- [x] Generic collections (#24). A hash map waits on hashing (#27).
 - [ ] Text formatting and number parsing (#25)
 - [ ] Time: clock, Duration, Instant, dates, time zones (#26)
 
@@ -52,7 +56,6 @@ New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3`
 - [ ] Cryptography: SHA-2, SHA-1, HMAC, HKDF, secure random (#28)
 - [ ] Random numbers: seeded PRNGs and distributions (#29)
 - [ ] Property-based testing (#30)
-- [ ] Unicode (#31)
 - [ ] Regex (linear time, RE2-style) (#32)
 - [ ] Serialization: CSV, TOML, CBOR/MessagePack, YAML (#33)
 - [ ] CLI argument parsing (#34)

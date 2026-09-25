@@ -1,5 +1,6 @@
 # Bytes benchmark: a packed Array<U32> byte buffer (see README.md).
 import Base
+import ../bytes.bend as Bytes
 
 # Bytes as Array<U32>, 4 bytes per slot, little-endian: byte i = (w[i/4] >> 8*(i%4)) & 255.
 # L = 28: N = 2^28 bytes, 2^26 words.
@@ -191,9 +192,35 @@ def lap(+name: String, t0: Nat, +chk: U32) -> IO(Unit):
     t1 : Nat <- IO.now()
     IO.print("ms\t" ++ name ++ "\t" ++ Nat.show((t1 - t0 : Nat)))
 
+def build.go(n: Nat, b: Bytes.Bytes, +i: U32) -> Bytes.Bytes:
+  match n:
+    case 0n:
+      b
+    case 1n+p:
+      build.go(p, Bytes.append(b, Bytes.set(Bytes.new(1), 0, (i .&. 255 : U32))), (i + 1 : U32))
+
+def build.check(r: Bytes.Bytes & Maybe<&2, U32>, +n: U32) -> U32:
+  (b, v) = r
+  match v:
+    case Some{x}:
+      (n + x : U32)
+    case None{}:
+      0
+
+def build.done(b: Bytes.Bytes, +n: U32) -> U32:
+  build.check(Bytes.get(b, (n - 1 : U32)), n)
+
+def op.build(+n: U32, +name: String) -> IO(Unit):
+  do IO<Unit>:
+    t0 : Nat <- IO.now()
+    lap(name, t0, build.done(build.go(U32.to_nat(n), Bytes.new(0), 0), n))
+
 def op.equal.done(t0: Nat, r: Array<U32> & U32) -> IO(Unit):
   (a, v) = r
-  lap("equal", t0, v)
+  do IO<Unit>:
+    lap("equal", t0, v)
+    op.build(1000000, "build_1000000")
+    op.build(4000000, "build_4000000")
 
 def op.equal(ac: Array<U32> & Array<U32>) -> IO(Unit):
   do IO<Unit>:
