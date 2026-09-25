@@ -23,7 +23,7 @@ query($owner: String!, $name: String!) {
   def chain: ., (.parent // empty | chain);
   def tier: ([.labels.nodes[].name | capture("^tier-(?<n>[0-9]+)$").n | tonumber] | min) // 99;
   [.data.repository.issues.nodes[]
-    | select(all(.subIssues.nodes[]; .state != "OPEN"))
+    | select(all(.subIssues.nodes[]; .state != "OPEN") and all(.labels.nodes[]; .name != "in-progress"))
     | select(any(chain; blocked) | not)]
   | sort_by(tier, .number) | .[:$limit][]
   | "#\(.number)\t\(if tier == 99 then "-" else "tier-\(tier)" end)\t\([.assignees.nodes[].login] | join(",") | if . == "" then "-" else . end)\t\(.title)\t\(.url)"'
