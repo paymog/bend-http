@@ -30,6 +30,7 @@ A name and its hash import the same package. Packages that depend on each other 
 | [`http`](http) | `0x310b0480ce5b511ff8da9704b3d27ef3/http.bend` | HTTP/1.1 client and server for http and https, with DNS and TLS. See [http/README.md](http/README.md). |
 | [`router`](router) | `0xf2239decc78af956c471ebf7f2f50374/router.bend` | Match an HTTP method and path to a handler. |
 | [`files`](files) | `./files/files.bend` (local; not yet published) | POSIX path operations, directory listing, metadata, mkdir, remove, rename, and private temp directories. |
+| [`collections`](collections) | `./collections/collections.bend` (local; not yet published) | An ordered map and set keyed by any `Data` type, a growable vector, a deque, and a priority queue. Import the file you need: `omap.bend`, `vec.bend`, `deque.bend`, or `heap.bend`. |
 
 The hub versions are `bytes@0.2.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@0.1.0.0`, `url@0.4.0.0`, `wire@0.4.0.0`, `dns@0.3.1.0`, `http@0.14.0.0`, and `router@0.1.1.0`, each named `bend-kit-<package>`.
 

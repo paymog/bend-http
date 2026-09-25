@@ -42,7 +42,7 @@ New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3`
 - [ ] Integer types: U8, U16, U64, I32, I64 (#21)
 - [ ] Filesystem and paths (#22)
 - [ ] Process and OS (#23)
-- [ ] Generic collections (#24)
+- [x] Generic collections (#24). A hash map waits on hashing (#27).
 - [ ] Text formatting and number parsing (#25)
 - [ ] Time: clock, Duration, Instant, dates, time zones (#26)
 
