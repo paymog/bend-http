@@ -1,8 +1,8 @@
 # bend-net
 
-HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are `Bytes`, from the `bytes` package.
+HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are packed bytes (`Http.Body`).
 
-`http@0.13.0` is a break from `http@0.12.0`: request and response bodies, stream pieces, and the wire bytes of `encode`, `encode_req`, and `exchange` are `Bytes`. `Req` and `Res` are `Type`, so a value is used once: its result type is `Result<&1, &1, Http.Err, Http.Res>`. `http@0.12.0` removed the client read internals (`need`, `fetch.gate`, `Sf`). `http@0.11.0` added `GotHead` to `Got`. `http@0.10.0` changed `exchange` to return the socket as `Maybe<Socket>`.
+`http@0.13.0` is a break from `http@0.12.0`: request and response bodies, stream pieces, and the wire bytes of `encode`, `encode_req`, and `exchange` are `Http.Body`. `http@0.13.1` adds `Http.Body`, `Http.from_string`, `Http.to_string`, and `Http.length`. `Req` and `Res` are `Type`, so a value is used once: its result type is `Result<&1, &1, Http.Err, Http.Res>`. `http@0.12.0` removed the client read internals (`need`, `fetch.gate`, `Sf`). `http@0.11.0` added `GotHead` to `Got`. `http@0.10.0` changed `exchange` to return the socket as `Maybe<Socket>`.
 
 ## Install
 
@@ -21,11 +21,10 @@ export PATH="$HOME/.local/bin:$PATH"
 Create `main.bend`, then:
 
 ```sh
-elbow add http@0.13.0
-elbow add bytes@0.2.0
+elbow add http@0.13.1
 ```
 
-Elbow writes a hash import for each, `elbow.toml`, and `elbow.lock`. Commit those. `http` ships `.c` and `.js` effects. They run host code. Proofs do not cover them.
+Elbow writes a hash import, `elbow.toml`, and `elbow.lock`. Commit those. `http` ships `.c` and `.js` effects. They run host code. Proofs do not cover them.
 
 HTTPS needs OpenSSL 3 at run time. On macOS, `brew install openssl@3`. The client looks for Homebrew's `libssl.3.dylib`, then `libssl.so.3`. Set `BEND_LIBSSL` to the library path if it is somewhere else.
 
@@ -68,7 +67,7 @@ def main() -> IO(Unit):
 
 `Http.fetch(method, url, headers, body)` is the same call with a method, headers, and body. `Http.fetch.with(..., ms)` sets the per-step timeout. The default is 30 seconds. A redirect chain stops after 20 hops (`ErrRedirect`). `Http.fetch.how(..., ms, mode)` chooses the policy: `ModeFollow` follows, `ModeManual` returns the 3xx, `ModeError` fails on a redirect. `ETIMEDOUT` is 60 on macOS and 110 on Linux. Both become `ErrTimeout`.
 
-`Http.get` is `fetch("GET", url, Http.empty(), Bytes.new(0))`.
+`Http.get` is `fetch("GET", url, Http.empty(), Http.from_string(""))`.
 
 A response body over about 30 KB overflows `bend file.bend`. Compile it. That needs clang 14 or newer (`apt install clang` on Debian 12 or Ubuntu 22.04 and later; `xcode-select --install` on macOS):
 
@@ -86,9 +85,9 @@ Repeated `Set-Cookie` lines stay separate. Encode writes one line per value. A s
 
 ## Bodies
 
-A body is `Bytes`. `Bytes.from_string(s)` makes one from a byte string (one `Char` per octet), and `Bytes.to_string(b)` turns it back. `Bytes.Bytes{len, buf}` gives the length. `Http.text(res)` decodes the body as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
+A body is an `Http.Body`: bytes packed four to a `U32`. `Http.from_string(s)` makes one from a byte string (one `Char` per octet), and `Http.to_string(b)` turns it back. `Http.length(b)` returns the body and its length in bytes. `http` ships its own copy of the `bytes` package, so use these rather than a separate `bytes` import: the types would not match. `Http.text(res)` decodes the body as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
 
-A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. A response over 16 MiB of body and 64 KiB of head is `ErrBad`. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req(method, target, host, headers, body)` is the request as `Bytes`; `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `Some{socket}` when the socket can take another request, the result, and any bytes already read past the response.
+A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. A response over 16 MiB of body and 64 KiB of head is `ErrBad`. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req(method, target, host, headers, body)` is the request as an `Http.Body`; `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `Some{socket}` when the socket can take another request, the result, and any bytes already read past the response.
 
 ## Compressed bodies
 
@@ -98,16 +97,16 @@ The `zlib` package has `Zlib.inflate` (raw DEFLATE, RFC 1951), `Zlib.gunzip` (RF
 
 ## Streams
 
-`Http.open(method, url, headers, body)` follows redirects like `fetch` and returns a `Stream` as soon as the head is in. `Http.stream.res(st)` gives the status and headers (its body is empty). `Http.stream.read(st)` returns the next piece of the body as `Bytes`, or `None` at the end; a piece is never empty. `Http.stream.close(st)` closes the connection. Content-Length, chunked, and close-delimited bodies all stream, and interim 1xx responses are skipped. A stream sends no `Accept-Encoding` and returns the bytes as sent. Streaming a 50 MB body keeps the program under 10 MB.
+`Http.open(method, url, headers, body)` follows redirects like `fetch` and returns a `Stream` as soon as the head is in. `Http.stream.res(st)` gives the status and headers (its body is empty). `Http.stream.read(st)` returns the next piece of the body as an `Http.Body`, or `None` at the end; a piece is never empty. `Http.stream.close(st)` closes the connection. Content-Length, chunked, and close-delimited bodies all stream, and interim 1xx responses are skipped. A stream sends no `Accept-Encoding` and returns the bytes as sent. Streaming a 50 MB body keeps the program under 10 MB.
 
-`Http.upload(method, url, headers)` sends the head with `Transfer-Encoding: chunked`. `Http.upload.write(up, piece)` sends one `Bytes` chunk; an empty piece sends nothing. `Http.upload.finish(up)` ends the body and returns the response as a `Stream`. A streamed request body cannot be replayed, so uploads do not follow redirects. `open.with` and `upload.with` take a step timeout.
+`Http.upload(method, url, headers)` sends the head with `Transfer-Encoding: chunked`. `Http.upload.write(up, piece)` sends one `Http.Body` chunk; an empty piece sends nothing. `Http.upload.finish(up)` ends the body and returns the response as a `Stream`. A streamed request body cannot be replayed, so uploads do not follow redirects. `open.with` and `upload.with` take a step timeout.
 
 ## Pool
 
 ```bend
 def next(pr: Http.Pool & Result<&1, &1, Http.Err, Http.Res>) -> IO(Http.Pool & Result<&1, &1, Http.Err, Http.Res>):
   (p, first) = pr
-  Http.pool.fetch(p, "GET", "https://example.com/b", Http.empty(), Bytes.new(0))
+  Http.pool.fetch(p, "GET", "https://example.com/b", Http.empty(), Http.from_string(""))
 
 def done(pr: Http.Pool & Result<&1, &1, Http.Err, Http.Res>) -> IO(Unit):
   (p, second) = pr
@@ -115,7 +114,7 @@ def done(pr: Http.Pool & Result<&1, &1, Http.Err, Http.Res>) -> IO(Unit):
 
 def main() -> IO(Unit):
   do IO<Unit>:
-    r1 : Http.Pool & Result<&1, &1, Http.Err, Http.Res> <- Http.pool.fetch(Http.pool.new(), "GET", "https://example.com/a", Http.empty(), Bytes.new(0))
+    r1 : Http.Pool & Result<&1, &1, Http.Err, Http.Res> <- Http.pool.fetch(Http.pool.new(), "GET", "https://example.com/a", Http.empty(), Http.from_string(""))
     r2 : Http.Pool & Result<&1, &1, Http.Err, Http.Res> <- next(r1)
     done(r2)
 ```
@@ -127,7 +126,7 @@ def main() -> IO(Unit):
 ```bend
 def hello(req: Http.Req) -> IO(Http.Res):
   Http.Req{method, path, headers, body} = req
-  IO.pure(Http.Res, Http.Res{200, Http.empty(), Bytes.from_string(path)})
+  IO.pure(Http.Res, Http.Res{200, Http.empty(), Http.from_string(path)})
 
 def main() -> IO(Unit):
   Http.serve(~hello, 18080)
