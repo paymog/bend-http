@@ -1,6 +1,6 @@
 # bend-kit
 
-Libraries for Bend 2, starting with HTTP/1.1 networking. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide for the installed compiler. Where the two disagree, the checker is right. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
+A general-purpose library for Bend 2, one hub package per folder. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide for the installed compiler. Where the two disagree, the checker is right. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
 
 ## Bend in brief
 
@@ -36,10 +36,10 @@ A law is a claim; a proof is a def with the same name. Each package has:
 ## Repo facts
 
 - Bodies are `Http.Body`, which is `Bytes.Bytes`. The `String` parsers (`parse`, `frame`) are the spec, over byte strings with one `Char` per octet (0..255). `Http.text` decodes UTF-8.
-- Foreign effects are defs whose body is `import "./effs/wire.c"` plus `import "./effs/wire.js"`. Every effect needs both twins, and the host function name is the def name, lowercased, with dots as underscores. Read `bend guide effects` before you write one. Proofs do not cover host code.
+- Foreign effects are defs whose body is `import "./effs/<pkg>.c"` plus `import "./effs/<pkg>.js"`, as in `wire/wire.bend`. Every effect needs both twins, and the host function name is the def name, lowercased, with dots as underscores. Read `bend guide effects` before you write one. Proofs do not cover host code.
 - `bend file.bend` runs through the checker's runner and overflows on strings over about 30 KB. Build big-body programs natively: `bend file.bend -o app`.
-- The hub shows the first comment line of a package's entry file as its description. Keep it one accurate line.
-- CI (`.github/workflows/ci.yml`) is the list of checks to run: `bend PROOF.bend` and `bend check.bend` in the root, `bend PROOF.bend` in each package folder, then each package's `check.bend`. `smoke.bend` does live fetches. Run `bend <file> --check-only` for a fast type check.
+- The hub shows the first comment line of a package's entry file as its description. Keep it one accurate line. It links to `tree/main/<pkg>`, and a publish is permanent, so do not rename or move a published package's folder.
+- Each package is a root folder `<pkg>/` with entry file `<pkg>/<pkg>.bend`, `LAWS.bend`, `PROOF.bend`, and optional `check.bend`, `effs/`, and `bench/`. `scripts/packages.sh` finds packages by that entry file, so a new package needs no CI change. `scripts/check.sh [pkg...]` runs what CI runs: `--check-only` on the entry file, then `PROOF.bend` and `check.bend` in the folder. CI checks only the packages a PR changes. `http/smoke.bend` does live fetches. Run `bend <file> --check-only` for a fast type check.
 - Packages publish to the Bend hub as `bend-kit-<package>`: run `bend login`, then `bend <file>.bend --publish bend-kit-<package>@<a.b.c.d>` from the package folder. Names are 12 to 64 characters of `a-z`, `0-9`, and `-`, and versions have four numbers. A publish is permanent, and a breaking change needs a new version.
 - `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.
