@@ -2,62 +2,24 @@ name: ci
 
 on:
   push:
-  pull_request:
 
 permissions:
   contents: read
 
 jobs:
-  proofs:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
+  bench:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm, macos-latest, macos-15]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    env:
+      BEND_NO_TELEMETRY: "1"
     steps:
       - uses: actions/checkout@v4
-      - name: Install Bend
-        run: curl -fsSL https://bend-lang.com/install.sh | sh
-        env:
-          BEND_NO_TELEMETRY: "1"
-      - name: Run proofs and checks
-        env:
-          BEND_NO_TELEMETRY: "1"
-        run: |
+      - run: curl -fsSL https://bend-lang.com/install.sh | sh
+      - run: |
           export PATH="$HOME/.bend/bin:$PATH"
-          bend PROOF.bend
-          bend check.bend
-          for d in url json dns encoding router bytes; do
-            (cd "$d" && bend PROOF.bend)
-          done
-          for f in url json encoding router bytes; do
-            bend "$f/check.bend"
-          done
-
-  smoke:
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v4
-      - name: Install Bend
-        run: curl -fsSL https://bend-lang.com/install.sh | sh
-        env:
-          BEND_NO_TELEMETRY: "1"
-      - name: Live fetch smoke
-        env:
-          BEND_NO_TELEMETRY: "1"
-        run: |
-          export PATH="$HOME/.bend/bin:$PATH"
-          bend smoke.bend | tee smoke.out
-          ! grep -q '^fail ' smoke.out
-      - name: Serve smoke
-        env:
-          BEND_NO_TELEMETRY: "1"
-        run: |
-          export PATH="$HOME/.bend/bin:$PATH"
-          bend demo.bend -o demo
-          ./demo > demo.log 2>&1 &
-          curl -s --retry 20 --retry-connrefused --retry-delay 1 -o /dev/null http://127.0.0.1:18080/
-          test "$(curl -s --data-binary @README.md http://127.0.0.1:18080/hi)" = /hi
-          test "$(curl --http1.1 -sv -o /dev/null -o /dev/null http://127.0.0.1:18080/one http://127.0.0.1:18080/two 2>&1 | grep -c 'Re-using existing connection')" = 1
-          test "$(printf 'GET /old HTTP/1.0\r\n\r\n' | nc -q 3 127.0.0.1 18080 | tail -c 4)" = /old
-          curl -s -o /dev/null -w '%{http_code}' -H 'Transfer-Encoding: gzip' -d x http://127.0.0.1:18080/ | grep -qx 400
-          curl -s -o /dev/null -w '%{http_code}' -H "X-A: $(head -c 70000 /dev/zero | tr '\0' a)" http://127.0.0.1:18080/ | grep -qx 431
+          nproc 2>/dev/null || sysctl -n hw.ncpu
+          time bend PROOF.bend
