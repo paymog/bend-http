@@ -42,6 +42,7 @@ Each package is one folder at the root. The folder name is the package name:
 ```
 <package>/
   <package>.bend   entry file; its first comment line is the hub description
+  VERSION          the hub version; CI publishes it on merge
   LAWS.bend        the claims
   PROOF.bend       a proof of each claim
   check.bend       runs the package on the native runtime (optional)
@@ -62,3 +63,5 @@ scripts/packages.sh origin/main   # the packages changed since origin/main
 `check.sh` type-checks the entry file, then runs `PROOF.bend` and `check.bend` in the package folder. `bend PROOF.bend` prints "All terms check." when every law holds.
 
 CI runs `check.sh` once for each package that a pull request changes. A change to `.github/` or `scripts/` checks every package, and so does each push to `main`. The `http` smoke tests run only when `http` changes.
+
+On each push to `main`, a package that passes its checks runs `scripts/publish.sh`. It publishes the package as `bend-kit-<package>@<VERSION>` unless that version is already on the hub. A pull request that changes a package's entry file or `effs/` must raise its `VERSION`; `scripts/bumped.sh` enforces this.
