@@ -1,6 +1,7 @@
-# DNS A-record lookup over UDP.
+# DNS A-record lookup over UDP. Source: https://github.com/paymog/bend-net/tree/main/dns
 import Base
-import bend-net-wire@0.4.0.0/wire.bend as Wire
+# bend-net-wire@0.4.0.1
+import 0xd0e5dfa14254dc2d25247f592b3afbe2/wire.bend as Wire
 
 # DNS A-record lookup (RFC 1035) over UDP. Messages are byte strings.
 #   import bend-net-dns@0.3.1.0/dns.bend as Dns

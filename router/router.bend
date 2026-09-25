@@ -1,4 +1,4 @@
-# Match an HTTP method and path to a handler.
+# Match an HTTP method and path to a handler. Source: https://github.com/paymog/bend-net/tree/main/router
 import Base
 
 # route(wantMethod, gotMethod, "/users/:id", path) → Maybe params.

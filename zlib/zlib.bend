@@ -1,4 +1,4 @@
-# DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950) over byte strings.
+# DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950) over byte strings. Source: https://github.com/paymog/bend-net/tree/main/zlib
 import Base
 
 # Bytes are one Char per octet (0..255), as everywhere in bend-net.

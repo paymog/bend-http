@@ -1,13 +1,13 @@
-# HTTP/1.1 client for http and https, with DNS and TLS.
+# HTTP/1.1 client and server for http and https, with DNS and TLS. Source: https://github.com/paymog/bend-net
 import Base
-import bend-net-wire@0.4.0.0/wire.bend as Wire
-import bend-net-url@0.4.0.0/url.bend as Url
-import bend-net-encoding@0.2.1.0/encoding.bend as Enc
-import bend-net-json@0.3.0.0/json.bend as Json
-import bend-net-bytes@0.2.0.0/bytes.bend as Bytes
-# The same packages as bend-net-dns@0.3.1.0 and bend-net-zlib@0.1.0.0.
-import 0x70dd8459e2a121e9bbe04ea7e5f8ebb7/dns.bend as Dns
-import 0xfa97cc8246066bff0b9237beb9af14d2/zlib.bend as Zlib
+# By hash: bend-net-wire@0.4.0.1, -url@0.4.0.1, -encoding@0.2.1.1, -json@0.3.0.1, -bytes@0.2.0.1, -dns@0.3.1.0, -zlib@0.1.0.0.
+import 0xd0e5dfa14254dc2d25247f592b3afbe2/wire.bend as Wire
+import 0x3f15daecd30cac66472f8e312600ba3b/url.bend as Url
+import 0x58d0718042afbd57ac3a0124bfc0570f/encoding.bend as Enc
+import 0x2213bb53d5eea36896815fc5b459bb6e/json.bend as Json
+import 0xdcce81c809e7aeb2e2c2fb775d28e0dc/bytes.bend as Bytes
+import 0x4ae4f319f4174df6a2ae71eb32ba9642/dns.bend as Dns
+import 0x05a6d0cd384bf4ebc144f0bc1b2d2350/zlib.bend as Zlib
 
 # HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
