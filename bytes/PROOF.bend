@@ -191,6 +191,15 @@ def Laws.set_u32le_across_words():
 def Laws.set_u16_past_len():
   {==}
 
+def Laws.u16be_roundtrip():
+  {==}
+
+def Laws.u16le_roundtrip():
+  {==}
+
+def Laws.u32be_roundtrip():
+  {==}
+
 def Laws.u32le_roundtrip():
   {==}
 

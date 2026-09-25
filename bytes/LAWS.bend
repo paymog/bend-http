@@ -238,6 +238,15 @@ law set_u32le_across_words:
 law set_u16_past_len:
   {str(Bytes.set.u16le(of("abc"), 2, 0)) == "abc" : String}
 
+law u16be_roundtrip:
+  {val(Bytes.get.u16be(Bytes.set.u16be(Bytes.new(7), 3, 48879), 3)) == Some{48879} : Maybe<&2, U32>}
+
+law u16le_roundtrip:
+  {val(Bytes.get.u16le(Bytes.set.u16le(Bytes.new(7), 3, 48879), 3)) == Some{48879} : Maybe<&2, U32>}
+
+law u32be_roundtrip:
+  {val(Bytes.get.u32be(Bytes.set.u32be(Bytes.new(7), 3, 3735928559), 3)) == Some{3735928559} : Maybe<&2, U32>}
+
 law u32le_roundtrip:
   {val(Bytes.get.u32le(Bytes.set.u32le(Bytes.new(7), 3, 3735928559), 3)) == Some{3735928559} : Maybe<&2, U32>}
 
