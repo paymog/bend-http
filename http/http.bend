@@ -14,7 +14,7 @@ import 0xe01785b64266bf3ba0068183b9f9f5e3/zlib.bend as Zlib
 # Bodies are Bytes. The String parsers below are the spec: one Char per octet.
 # fetch reads until frame() says the response is whole. It returns Result, not Maybe.
 # Build with -o for big bodies: the `bend file.bend` runner overflows on ~30 KB strings; native binaries do not.
-#   import bend-kit-http@0.14.0.0/http.bend as Http
+#   import bend-kit-http@0.14.0.1/http.bend as Http
 
 type Req is Type:
   Req{method: String, path: String, headers: Map<&2, List<&2, String>>, body: Bytes.Bytes}
