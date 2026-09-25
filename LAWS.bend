@@ -43,25 +43,25 @@ law sanitize_drop_lf:
 # RFC 9112 §3.2: HTTP/1.1 request without Host is not a message.
 law http11_needs_host:
   for b: String
-  {Http.parse("GET / HTTP/1.1\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}
+  {Http.parse("GET / HTTP/1.1\r\n\r\n" ++ b) == None{} : Maybe<&1, Http.Req>}
 
 # RFC 9112 §6.3 (7): no CL and no TE ⇒ request body length 0.
 law parse_zero_body:
   for b: String
-  {Http.got_body(Http.parse("GET / HTTP/1.1\r\nHost: x\r\n\r\n" ++ b)) == "" : String}
+  {Http.got_body(Http.parse("GET / HTTP/1.1\r\nHost: x\r\n\r\n" ++ b)) == Bytes.from_string("") : Bytes.Bytes}
 
 # RFC 9112 §6.1/6.3: Transfer-Encoding without a chunked decoder is rejected.
 law cl_te_rejects:
   for b: String
-  {Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&2, Http.Req>}
+  {Http.parse("GET / HTTP/1.1\r\nHost: x\r\nContent-Length: 0\r\nTransfer-Encoding: chunked\r\n\r\n" ++ b) == None{} : Maybe<&1, Http.Req>}
 
 # RFC 9112 §6.3 (6): response Content-Length is the body.
 law parse_res_body:
-  {Http.res_body(Http.parse_res("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")) == "ok" : String}
+  {Http.res_body(Http.parse_res("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok")) == Bytes.from_string("ok") : Bytes.Bytes}
 
 # RFC 9112 §8: a body shorter than Content-Length is incomplete, not a message.
 law cl_short_rejects:
-  {Http.parse("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == None{} : Maybe<&2, Http.Req>}
+  {Http.parse("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == None{} : Maybe<&1, Http.Req>}
 
 # RFC 9112 §7.1: last-chunk then an empty trailer ends the body; later bytes are not body.
 law chunk_last_ends:
@@ -114,9 +114,9 @@ law chunk_overflow_rejects:
 
 # RFC 9112 §6.1: chunked request without Content-Length is framed by chunks.
 law parse_chunked_req:
-  {Http.got_body(Http.parse("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n3\r\n yo\r\n0\r\n\r\n")) == "hi yo" : String}
+  {Http.got_body(Http.parse("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi\r\n3\r\n yo\r\n0\r\n\r\n")) == Bytes.from_string("hi yo") : Bytes.Bytes}
 
-def body_of(f: Http.Frame) -> Maybe<&2, String>:
+def body_of(f: Http.Frame) -> Maybe<&1, Bytes.Bytes>:
   match f:
     case Http.FrameDone{r}:
       Some{Http.res_body(Some{r})}
@@ -142,7 +142,7 @@ law frame_cl_cut_bad:
 # Content-Length ends the message; no need to wait for close, extra bytes are not body.
 law frame_cl_done:
   for b: String
-  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ++ b, False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok" ++ b, False{}, False{})) == Some{Bytes.from_string("ok")} : Maybe<&1, Bytes.Bytes>}
 
 # RFC 9112 §6.3 (8): no framing ⇒ wait for close, then everything is body.
 law frame_open_more:
@@ -151,26 +151,26 @@ law frame_open_more:
 
 law frame_open_close:
   for b: String
-  {body_of(Http.frame("HTTP/1.1 200 OK\r\n\r\n" ++ b, True{}, False{})) == Some{b} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\n\r\n" ++ b, True{}, False{})) == Some{Bytes.from_string(b)} : Maybe<&1, Bytes.Bytes>}
 
 # Chunked: a partial chunk reads on; the last-chunk ends it without close.
 law frame_chunked_more:
   {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhel", False{}, False{}) == Http.FrameMore{} : Http.Frame}
 
 law frame_chunked_done:
-  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", False{}, False{})) == Some{"hello"} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n5\r\nhello\r\n0\r\n\r\n", False{}, False{})) == Some{Bytes.from_string("hello")} : Maybe<&1, Bytes.Bytes>}
 
 # RFC 9112 §6.3 (1): a HEAD response has no body, whatever Content-Length says.
 law frame_head_request:
   for b: String
-  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n" ++ b, False{}, True{})) == Some{""} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\n" ++ b, False{}, True{})) == Some{Bytes.from_string("")} : Maybe<&1, Bytes.Bytes>}
 
 # RFC 9112 §6.3 (1): 204 and 304 have no body.
 law frame_204:
-  {body_of(Http.frame("HTTP/1.1 204 No Content\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 204 No Content\r\n\r\n", False{}, False{})) == Some{Bytes.from_string("")} : Maybe<&1, Bytes.Bytes>}
 
 law frame_304:
-  {body_of(Http.frame("HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 304 Not Modified\r\nContent-Length: 9\r\n\r\n", False{}, False{})) == Some{Bytes.from_string("")} : Maybe<&1, Bytes.Bytes>}
 
 law frame_bad_status:
   {Http.frame("HTTP/1.1 abc OK\r\n\r\n", False{}, False{}) == Http.FrameBad{} : Http.Frame}
@@ -201,41 +201,41 @@ law frame_te_gzip_more:
   {Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", False{}, False{}) == Http.FrameMore{} : Http.Frame}
 
 law frame_te_gzip_close:
-  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{})) == Some{"abc"} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 200 OK\r\nTransfer-Encoding: gzip\r\n\r\nabc", True{}, False{})) == Some{Bytes.from_string("abc")} : Maybe<&1, Bytes.Bytes>}
 
 law text_utf8:
-  {Http.text(Http.Res{200, Http.empty(), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}}) == "é" : String}
+  {Http.text(Http.Res{200, Http.empty(), Bytes.from_string(SCon{Chr{195}, SCon{Chr{169}, SNil{}}})}) == "é" : String}
 
 law json_flag:
-  {Http.json(Http.Res{200, Http.empty(), "true"}) == Some{Json.Flag{True{}}} : Maybe<&2, Json.Val>}
+  {Http.json(Http.Res{200, Http.empty(), Bytes.from_string("true")}) == Some{Json.Flag{True{}}} : Maybe<&2, Json.Val>}
 
 
 law req_keep:
-  {Http.encode_req.on("GET", "/x", "h", Http.empty(), "", False{}) == "GET /x HTTP/1.1\r\nconnection: keep-alive\r\nhost: h\r\n\r\n" : String}
+  {Http.encode_req.on("GET", "/x", "h", Http.empty(), Bytes.new(0), False{}) == Bytes.from_string("GET /x HTTP/1.1\r\nconnection: keep-alive\r\nhost: h\r\n\r\n") : Bytes.Bytes}
 
 law again_keep:
-  {Http.again(False{}, Http.empty(), Some{"x"}) == True{} : Bool}
+  {Http.again(False{}, Http.empty(), Some{Bytes.from_string("x")}) == Some{Bytes.from_string("x")} : Maybe<&1, Bytes.Bytes>}
 
 law again_asked_close:
-  {Http.again(True{}, Http.empty(), Some{"x"}) == False{} : Bool}
+  {Http.again(True{}, Http.empty(), Some{Bytes.from_string("x")}) == None{} : Maybe<&1, Bytes.Bytes>}
 
 law again_peer_close:
-  {Http.again(False{}, Http.set(Http.empty(), "connection", "Close"), Some{"x"}) == False{} : Bool}
+  {Http.again(False{}, Http.set(Http.empty(), "connection", "Close"), Some{Bytes.from_string("x")}) == None{} : Maybe<&1, Bytes.Bytes>}
 
 law again_until_close:
-  {Http.again(False{}, Http.empty(), None{}) == False{} : Bool}
+  {Http.again(False{}, Http.empty(), None{}) == None{} : Maybe<&1, Bytes.Bytes>}
 
 def sample_hop() -> Http.Hop:
-  Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/"}, Http.empty(), ""}
+  Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/"}, Http.empty(), Bytes.new(0)}
 
 law policy_manual:
-  {Http.fetch.policy(Http.ModeManual{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}) == Http.NDone{Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}} : Http.Next}
+  {Http.fetch.policy(Http.ModeManual{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), Bytes.new(0)}}) == Http.NDone{Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), Bytes.new(0)}}} : Http.Next}
 
 law policy_error:
-  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), ""}}) == Http.NDone{Fail{Http.ErrRedirect{}}} : Http.Next}
+  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{301, Http.set(Http.empty(), "location", "/z"), Bytes.new(0)}}) == Http.NDone{Fail{Http.ErrRedirect{}}} : Http.Next}
 
 law policy_error_ok:
-  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{200, Http.empty(), ""}}) == Http.NDone{Done{Http.Res{200, Http.empty(), ""}}} : Http.Next}
+  {Http.fetch.policy(Http.ModeError{}, 19n, sample_hop(), Done{Http.Res{200, Http.empty(), Bytes.new(0)}}) == Http.NDone{Done{Http.Res{200, Http.empty(), Bytes.new(0)}}} : Http.Next}
 def hints(n: Nat) -> String:
   match n:
     case 0n:
@@ -251,73 +251,73 @@ law frame_100_cut:
   {Http.frame("HTTP/1.1 100 Continue\r\n\r\n", True{}, False{}) == Http.FrameBad{} : Http.Frame}
 
 law frame_100_then_ok:
-  {body_of(Http.frame("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 100 Continue\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{Bytes.from_string("ok")} : Maybe<&1, Bytes.Bytes>}
 
 law frame_103_then_ok:
-  {body_of(Http.frame("HTTP/1.1 103 Early Hints\r\nLink: </a>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{"ok"} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 103 Early Hints\r\nLink: </a>; rel=preload\r\n\r\nHTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nok", False{}, False{})) == Some{Bytes.from_string("ok")} : Maybe<&1, Bytes.Bytes>}
 
 # 101 switches the protocol; nothing follows.
 law frame_101_final:
-  {body_of(Http.frame("HTTP/1.1 101 Switching Protocols\r\n\r\n", False{}, False{})) == Some{""} : Maybe<&2, String>}
+  {body_of(Http.frame("HTTP/1.1 101 Switching Protocols\r\n\r\n", False{}, False{})) == Some{Bytes.from_string("")} : Maybe<&1, Bytes.Bytes>}
 
 law frame_interim_cap:
   {Http.frame(hints(9n), False{}, False{}) == Http.FrameBad{} : Http.Frame}
 
 law frame_interim_eight:
-  {body_of(Http.frame(hints(8n) ++ "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nZ", False{}, False{})) == Some{"Z"} : Maybe<&2, String>}
+  {body_of(Http.frame(hints(8n) ++ "HTTP/1.1 200 OK\r\nContent-Length: 1\r\n\r\nZ", False{}, False{})) == Some{Bytes.from_string("Z")} : Maybe<&1, Bytes.Bytes>}
 
 # RFC 9110 §8.6: a bodiless GET carries no Content-Length.
 law req_get:
-  {Http.encode_req("GET", "/x", "h", Http.empty(), "") == "GET /x HTTP/1.1\r\nconnection: close\r\nhost: h\r\n\r\n" : String}
+  {Http.encode_req("GET", "/x", "h", Http.empty(), Bytes.new(0)) == Bytes.from_string("GET /x HTTP/1.1\r\nconnection: close\r\nhost: h\r\n\r\n") : Bytes.Bytes}
 
 # Content-Length counts octets; caller CL/TE never reach the wire; field values cannot inject lines.
 law req_post_guarded:
-  {Http.encode_req("POST", "/", "h:8080", Http.set(Http.set(Http.set(Http.empty(), "Content-Length", "99"), "Transfer-Encoding", "chunked"), "X-A", "1\r\nEvil: 1"), SCon{Chr{195}, SCon{Chr{169}, SNil{}}}) == "POST / HTTP/1.1\r\nconnection: close\r\ncontent-length: 2\r\nhost: h:8080\r\nx-a: 1Evil: 1\r\n\r\n" ++ SCon{Chr{195}, SCon{Chr{169}, SNil{}}} : String}
+  {Http.encode_req("POST", "/", "h:8080", Http.set(Http.set(Http.set(Http.empty(), "Content-Length", "99"), "Transfer-Encoding", "chunked"), "X-A", "1\r\nEvil: 1"), Bytes.from_string(SCon{Chr{195}, SCon{Chr{169}, SNil{}}})) == Bytes.from_string("POST / HTTP/1.1\r\nconnection: close\r\ncontent-length: 2\r\nhost: h:8080\r\nx-a: 1Evil: 1\r\n\r\n" ++ SCon{Chr{195}, SCon{Chr{169}, SNil{}}}) : Bytes.Bytes}
 
 # What the client sends, the server parses back to the same body.
 law req_roundtrip:
-  {Http.got_body(Http.parse(Http.encode_req("PUT", "/k", "h", Http.empty(), "v=1"))) == "v=1" : String}
+  {Http.got_body(Http.parse(Bytes.to_string(Http.encode_req("PUT", "/k", "h", Http.empty(), Bytes.from_string("v=1"))))) == Bytes.from_string("v=1") : Bytes.Bytes}
 
 # RFC 9110 §15.4.2 note: user agents change POST to GET on 301 and 302; body headers go with the body.
 law redirect_301_post_to_get:
-  {Http.redirect(301, Http.set(Http.empty(), "location", "z"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/z"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(301, Http.set(Http.empty(), "location", "z"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/z"}, Http.set(Http.empty(), "x-a", "1"), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 law redirect_302_get_kept:
-  {Http.redirect(302, Http.set(Http.empty(), "location", "/q?1"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/q?1"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "/q?1"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "x-a", "1"), Bytes.new(0)}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/q?1"}, Http.set(Http.empty(), "x-a", "1"), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 # §15.4.4: 303 means GET the new URI.
 law redirect_303_put_to_get:
-  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/done"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/done"}, Http.set(Http.empty(), "x-a", "1"), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 law redirect_303_head_kept:
-  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == Some{Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/done"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(303, Http.set(Http.empty(), "location", "/done"), Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), Bytes.new(0)}) == Some{Http.Hop{"HEAD", Url.Abs{"https", "a.com", 443, "/done"}, Http.empty(), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 # §15.4.8, §15.4.9: 307 and 308 keep the method and the body.
 law redirect_307_keeps_post:
-  {Http.redirect(307, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(307, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}) == Some{Http.Hop{"POST", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}} : Maybe<&1, Http.Hop>}
 
 law redirect_308_keeps_put:
-  {Http.redirect(308, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}) == Some{Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), "b"}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(308, Http.set(Http.empty(), "location", "/v2"), Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}) == Some{Http.Hop{"PUT", Url.Abs{"https", "a.com", 443, "/v2"}, Http.set(Http.set(Http.empty(), "content-type", "text/plain"), "x-a", "1"), Bytes.from_string("b")}} : Maybe<&1, Http.Hop>}
 
 # Credentials never follow a hop to another origin.
 law redirect_cross_origin_drops_creds:
-  {Http.redirect(302, Http.set(Http.empty(), "location", "https://evil.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.set(Http.empty(), "authorization", "t"), "cookie", "c"), "x-a", "1"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "evil.com", 443, "/"}, Http.set(Http.empty(), "x-a", "1"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "https://evil.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.set(Http.set(Http.empty(), "authorization", "t"), "cookie", "c"), "x-a", "1"), Bytes.new(0)}) == Some{Http.Hop{"GET", Url.Abs{"https", "evil.com", 443, "/"}, Http.set(Http.empty(), "x-a", "1"), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 law redirect_same_origin_keeps_creds:
-  {Http.redirect(302, Http.set(Http.empty(), "location", "/b"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/b"}, Http.set(Http.empty(), "authorization", "t"), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "/b"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), Bytes.new(0)}) == Some{Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/b"}, Http.set(Http.empty(), "authorization", "t"), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 # https to http is another origin too.
 law redirect_downgrade_is_cross_origin:
-  {Http.redirect(302, Http.set(Http.empty(), "location", "http://a.com/x/y"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), ""}) == Some{Http.Hop{"GET", Url.Abs{"http", "a.com", 80, "/x/y"}, Http.empty(), ""}} : Maybe<&2, Http.Hop>}
+  {Http.redirect(302, Http.set(Http.empty(), "location", "http://a.com/x/y"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.set(Http.empty(), "authorization", "t"), Bytes.new(0)}) == Some{Http.Hop{"GET", Url.Abs{"http", "a.com", 80, "/x/y"}, Http.empty(), Bytes.new(0)}} : Maybe<&1, Http.Hop>}
 
 law redirect_200_none:
-  {Http.redirect(200, Http.set(Http.empty(), "location", "/z"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+  {Http.redirect(200, Http.set(Http.empty(), "location", "/z"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), Bytes.new(0)}) == None{} : Maybe<&1, Http.Hop>}
 
 law redirect_no_location_none:
-  {Http.redirect(301, Http.empty(), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+  {Http.redirect(301, Http.empty(), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), Bytes.new(0)}) == None{} : Maybe<&1, Http.Hop>}
 
 law redirect_other_scheme_none:
-  {Http.redirect(301, Http.set(Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), ""}) == None{} : Maybe<&2, Http.Hop>}
+  {Http.redirect(301, Http.set(Http.empty(), "location", "ftp://a.com/"), Http.Hop{"GET", Url.Abs{"https", "a.com", 443, "/x/y"}, Http.empty(), Bytes.new(0)}) == None{} : Maybe<&1, Http.Hop>}
 
 law after_cl:
   {Http.after("HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\nokNEXT", False{}) == Some{"NEXT"} : Maybe<&2, String>}
@@ -367,11 +367,11 @@ law req_head_more:
 
 # RFC 9112 §6.3 (6): a body shorter than Content-Length is read on, not refused.
 law req_cl_more:
-  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "content-length", "5"), ""}} : Http.Got}
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "content-length", "5"), Bytes.new(0)}} : Http.Got}
 
 # RFC 9112 §7.1: an open chunked body is read on.
 law req_chunk_more:
-  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "transfer-encoding", "chunked"), ""}} : Http.Got}
+  {Http.parse.got("POST / HTTP/1.1\r\nHost: x\r\nTransfer-Encoding: chunked\r\n\r\n2\r\nhi") == Http.GotHead{Http.Req{"POST", "/", Http.add(Http.add(Http.empty(), "host", "x"), "transfer-encoding", "chunked"), Bytes.new(0)}} : Http.Got}
 
 # A bad chunk size is refused at once, not waited on.
 law req_chunk_bad:
@@ -387,7 +387,7 @@ law req_http2_bad:
 
 # RFC 9112 §3.2: HTTP/1.0 does not need Host.
 law req_http10_no_host:
-  {Http.got_body(Http.parse("POST / HTTP/1.0\r\nContent-Length: 2\r\n\r\nhi")) == "hi" : String}
+  {Http.got_body(Http.parse("POST / HTTP/1.0\r\nContent-Length: 2\r\n\r\nhi")) == Bytes.from_string("hi") : Bytes.Bytes}
 
 # RFC 9110 §15: the reason phrase follows the status.
 law reason_404:
@@ -399,11 +399,11 @@ law reason_unknown:
 
 # RFC 9110 §8.6: 204 has no body and no Content-Length.
 law encode_204_nobody:
-  {Http.encode(Http.Res{204, Http.empty(), "x"}) == "HTTP/1.1 204 No Content\r\n\r\n" : String}
+  {Http.encode(Http.Res{204, Http.empty(), Bytes.from_string("x")}) == Bytes.from_string("HTTP/1.1 204 No Content\r\n\r\n") : Bytes.Bytes}
 
 # RFC 9110 §9.3.2: HEAD gets the length but not the body.
 law encode_head:
-  {Http.encode.on(Http.Res{200, Http.empty(), "hi"}, True{}) == "HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n" : String}
+  {Http.encode.on(Http.Res{200, Http.empty(), Bytes.from_string("hi")}, True{}) == Bytes.from_string("HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\n") : Bytes.Bytes}
 
 
 # RFC 9112 §9.3: an HTTP/1.1 request without close keeps the connection.
@@ -467,23 +467,23 @@ def gzbytes(xs: List<&2, U32>) -> String:
 
 # RFC 9110 §8.4.1.3: a gzip body is decoded; the headers stay as sent.
 law decoded_gzip:
-  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 205, 201, 201, 87, 72, 175, 202, 44, 80, 40, 207, 47, 202, 73, 1, 0, 107, 125, 232, 183, 16, 0, 0, 0])})) == "hello gzip world" : String}
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), Bytes.from_string(gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 203, 72, 205, 201, 201, 87, 72, 175, 202, 44, 80, 40, 207, 47, 202, 73, 1, 0, 107, 125, 232, 183, 16, 0, 0, 0]))})) == Bytes.from_string("hello gzip world") : Bytes.Bytes}
 
 # RFC 9110 §8.4: codings are listed in the order applied, so they are undone in reverse.
 law decoded_order:
-  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "deflate, gzip"), gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 171, 152, 163, 173, 121, 62, 252, 132, 231, 26, 31, 93, 45, 54, 6, 209, 15, 44, 220, 0, 65, 130, 38, 92, 18, 0, 0, 0])})) == "two layers" : String}
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "deflate, gzip"), Bytes.from_string(gzbytes([31, 139, 8, 0, 0, 0, 0, 0, 2, 255, 171, 152, 163, 173, 121, 62, 252, 132, 231, 26, 31, 93, 45, 54, 6, 209, 15, 44, 220, 0, 65, 130, 38, 92, 18, 0, 0, 0]))})) == Bytes.from_string("two layers") : Bytes.Bytes}
 
 # A coding we cannot decode leaves the body as sent.
 law decoded_unknown:
-  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "br"), "xyz"})) == "xyz" : String}
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "br"), Bytes.from_string("xyz")})) == Bytes.from_string("xyz") : Bytes.Bytes}
 
 # A corrupt gzip body is a malformed response.
 law decoded_corrupt:
-  {Http.decoded(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), "not gzip"}) == Fail{Http.ErrBad{}} : Result<&2, &2, Http.Err, Http.Res>}
+  {Http.decoded(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), Bytes.from_string("not gzip")}) == Fail{Http.ErrBad{}} : Result<&1, &1, Http.Err, Http.Res>}
 
 # An empty body (HEAD, 204, 304) is never decoded.
 law decoded_empty:
-  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), ""})) == "" : String}
+  {Http.res_body(Http.decoded.some(Http.Res{200, Http.set(Http.empty(), "content-encoding", "gzip"), Bytes.from_string("")})) == Bytes.from_string("") : Bytes.Bytes}
 
 # fetch asks for gzip and deflate unless the caller says otherwise.
 law accept_enc_default:
@@ -635,11 +635,11 @@ law loop_cookies_bytes:
 
 # RFC 9112 §6.3 (8): a body that ends at close leaves nothing to reuse the connection for.
 law loop_close_rest:
-  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\n\r\nabc"], True{}, False{}, Http.RtMore{Http.rv.start()})) == None{} : Maybe<&2, String>}
+  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\n\r\nabc"], True{}, False{}, Http.RtMore{Http.rv.start()})) == None{} : Maybe<&1, Bytes.Bytes>}
 
 # A self-delimited body leaves the bytes that came with its end, and no later read is taken.
 law loop_cl_rest:
-  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\no", "kNE", "XT"], False{}, False{}, Http.RtMore{Http.rv.start()})) == Some{"NE"} : Maybe<&2, String>}
+  {Http.rt.rest(Http.rv.go(["HTTP/1.1 200 OK\r\nContent-Length: 2\r\n\r\no", "kNE", "XT"], False{}, False{}, Http.RtMore{Http.rv.start()})) == Some{Bytes.from_string("NE")} : Maybe<&1, Bytes.Bytes>}
 
 # RFC 9112 §6.3: how a streamed body ends.
 law stream_cl:
@@ -659,15 +659,15 @@ law stream_nobody:
 
 # A Content-Length body stops at its length; bytes past it are not body.
 law stream_len_split:
-  {Http.pc.of(Http.RbLen{3}, Bytes.from_string("abcdef")) == Http.Pc{Http.RbDone{}, Http.PoPiece{"abc"}} : Http.Pc}
+  {Http.pc.of(Http.RbLen{3}, Bytes.from_string("abcdef")) == Http.Pc{Http.RbDone{}, Http.PoPiece{Bytes.from_string("abc")}} : Http.Pc}
 
 # A short read is a piece, and the rest is still owed.
 law stream_len_more:
-  {Http.pc.of(Http.RbLen{5}, Bytes.from_string("ab")) == Http.Pc{Http.RbLen{3}, Http.PoPiece{"ab"}} : Http.Pc}
+  {Http.pc.of(Http.RbLen{5}, Bytes.from_string("ab")) == Http.Pc{Http.RbLen{3}, Http.PoPiece{Bytes.from_string("ab")}} : Http.Pc}
 
 # A chunk split across reads gives the bytes that have arrived.
 law stream_chunk_piece:
-  {Http.pc.of(Http.RbChunk{Http.dc.start()}, Bytes.from_string("5\r\nhel")) == Http.Pc{Http.RbChunk{Http.DcData{2}}, Http.PoPiece{"hel"}} : Http.Pc}
+  {Http.pc.of(Http.RbChunk{Http.dc.start()}, Bytes.from_string("5\r\nhel")) == Http.Pc{Http.RbChunk{Http.DcData{2}}, Http.PoPiece{Bytes.from_string("hel")}} : Http.Pc}
 
 # The last chunk ends the stream even when no data came with it.
 law stream_chunk_end:
@@ -676,3 +676,7 @@ law stream_chunk_end:
 # RFC 9112 §8: a close before Content-Length is met is an error.
 law stream_len_cut:
   {Http.pc.eof(Http.RbLen{3}) == Http.Pc{Http.RbDone{}, Http.PoBad{Http.ErrBad{}}} : Http.Pc}
+
+# A body with no Content-Encoding passes through as sent.
+law decoded_plain:
+  {Http.decoded(Http.Res{200, Http.empty(), Bytes.from_string("hi")}) == Done{Http.Res{200, Http.empty(), Bytes.from_string("hi")}} : Result<&1, &1, Http.Err, Http.Res>}
