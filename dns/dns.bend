@@ -1,9 +1,9 @@
 # DNS A-record lookup over UDP.
 import Base
-import ../wire.bend as Wire
+import bend-net-wire@0.4.0.0/wire.bend as Wire
 
 # DNS A-record lookup (RFC 1035) over UDP. Messages are byte strings.
-#   import ./dns/dns.bend as Dns
+#   import bend-net-dns@0.3.1.0/dns.bend as Dns
 
 type Cur is Data:
   Cur{v: U32, rest: String}

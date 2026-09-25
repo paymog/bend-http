@@ -1,20 +1,20 @@
 # HTTP/1.1 client for http and https, with DNS and TLS.
 import Base
-import ./about.bend as About
-import ./wire.bend as Wire
-import ./dns/dns.bend as Dns
-import ./url/url.bend as Url
-import ./encoding/encoding.bend as Enc
-import ./json/json.bend as Json
-import ./zlib/zlib.bend as Zlib
-import ./bytes/bytes.bend as Bytes
+import bend-net-wire@0.4.0.0/wire.bend as Wire
+import bend-net-url@0.4.0.0/url.bend as Url
+import bend-net-encoding@0.2.1.0/encoding.bend as Enc
+import bend-net-json@0.3.0.0/json.bend as Json
+import bend-net-bytes@0.2.0.0/bytes.bend as Bytes
+# The same packages as bend-net-dns@0.3.1.0 and bend-net-zlib@0.1.0.0.
+import 0x70dd8459e2a121e9bbe04ea7e5f8ebb7/dns.bend as Dns
+import 0xfa97cc8246066bff0b9237beb9af14d2/zlib.bend as Zlib
 
 # HTTP/1.1 codec and client (RFC 9112) for http:// and https:// (OpenSSL 3 at run time).
 # parse: start-line → field lines → blank → body length (§6.3); chunked (§7.1).
 # Bodies are Bytes. The String parsers below are the spec: one Char per octet.
 # fetch reads until frame() says the response is whole. It returns Result, not Maybe.
 # Build with -o for big bodies: the `bend file.bend` runner overflows on ~30 KB strings; native binaries do not.
-#   import ./http.bend as Http
+#   import bend-net-http@0.14.0.0/http.bend as Http
 
 type Req is Type:
   Req{method: String, path: String, headers: Map<&2, List<&2, String>>, body: Bytes.Bytes}
@@ -22,7 +22,7 @@ type Req is Type:
 type Res is Type:
   Res{status: U32, headers: Map<&2, List<&2, String>>, body: Bytes.Bytes}
 
-# Http ships its own copy of bytes, so callers name and build bodies through these.
+# The body type and its conversions, so a caller needs no bytes import.
 def Body() -> Type:
   Bytes.Bytes
 

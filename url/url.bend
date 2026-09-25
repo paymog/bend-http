@@ -1,4 +1,4 @@
-# origin-form paths and query strings, percent-encoded.
+# URL parsing, resolution, and percent-encoding (RFC 3986).
 import Base
 
 # origin-form /path[?k=v] with RFC 3986 percent-encoding.
