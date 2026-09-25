@@ -3,7 +3,7 @@
 How fast could a Bend `Bytes` type be? This runs the same seven byte-buffer operations in two Bend layouts and five other languages.
 
 - `packed.bend` is the candidate: `Array<U32>`, 4 bytes per slot, little-endian.
-- `string.bend` is what bend-net uses today: a `String`, one `Char` list cell per byte.
+- `string.bend` is what bend-kit uses today: a `String`, one `Char` list cell per byte.
 
 ## Run
 

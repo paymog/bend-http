@@ -1,6 +1,6 @@
-# bend-net
+# bend-kit
 
-HTTP/1.1 client packages written in Bend 2. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide for the installed compiler. Where the two disagree, the checker is right. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
+Libraries for Bend 2, starting with HTTP/1.1 networking. Bend is new, so your priors about it are weak or wrong. Run `bend guide` before you write Bend code. It is the full language guide for the installed compiler. Where the two disagree, the checker is right. `bend base Map` prints one Base name and everything under it. `bend base --types` prints the Base types.
 
 ## Bend in brief
 
@@ -15,7 +15,7 @@ Bend looks like Python but acts like Haskell or Lean, with Rust-style resource r
 - **Define before use.** A def can call only defs above it in the file (or imported), so helpers go first.
 - **Termination is checked.** Each recursive call must pass a structurally smaller piece of its input, and the checker reads arguments left to right, so put the shrinking parameter first. Mutual recursion is not allowed. Merge the functions into one def with a selector argument. For loops bounded by the outside world, count down a `Nat` fuel argument. `@unsafe` skips the check and loses the proof guarantees; avoid adding it (see ROADMAP.md).
 - **Literals.** `42` is `U32`, `3n` is `Nat`, `'c'` is `Char`, `"s"` is `String`. A `String` is a list of `Char`: `SCon{Chr{c}, t}` / `SNil{}`. Lists are `Con{h, t}` / `Nil{}`, and `[a, b]` or `h <> t`.
-- **Modules.** `import ./url/url.bend as Url` makes `Url.x` name each def in that file. A hub package imports by name, `import bend-net-bytes@0.2.0.0/bytes.bend as Bytes`, or by content hash, `import 0x<hash>/bytes.bend as Bytes`. Both give the same types.
+- **Modules.** `import ./url/url.bend as Url` makes `Url.x` name each def in that file. A hub package imports by name, `import bend-kit-bytes@0.2.0.0/bytes.bend as Bytes`, or by content hash, `import 0x<hash>/bytes.bend as Bytes`. Both give the same types.
 
 ## Bend bugs
 
@@ -40,6 +40,6 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `bend file.bend` runs through the checker's runner and overflows on strings over about 30 KB. Build big-body programs natively: `bend file.bend -o app`.
 - The hub shows the first comment line of a package's entry file as its description. Keep it one accurate line.
 - CI (`.github/workflows/ci.yml`) is the list of checks to run: `bend PROOF.bend` and `bend check.bend` in the root, `bend PROOF.bend` in each package folder, then each package's `check.bend`. `smoke.bend` does live fetches. Run `bend <file> --check-only` for a fast type check.
-- Packages publish to the Bend hub as `bend-net-<package>`: run `bend login`, then `bend <file>.bend --publish bend-net-<package>@<a.b.c.d>` from the package folder. Names are 12 to 64 characters of `a-z`, `0-9`, and `-`, and versions have four numbers. A publish is permanent, and a breaking change needs a new version.
-- `http` and `dns` import their siblings from the hub, not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
+- Packages publish to the Bend hub as `bend-kit-<package>`: run `bend login`, then `bend <file>.bend --publish bend-kit-<package>@<a.b.c.d>` from the package folder. Names are 12 to 64 characters of `a-z`, `0-9`, and `-`, and versions have four numbers. A publish is permanent, and a breaking change needs a new version.
+- `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.

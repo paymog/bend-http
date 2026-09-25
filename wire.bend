@@ -1,4 +1,4 @@
-# Byte-exact TCP, UDP, and TLS sockets.
+# Byte-exact TCP, UDP, and TLS sockets. Source: https://github.com/paymog/bend-kit
 import Base
 
 # Socket IO on octets: one Char per byte (0..255). Base's TCP/UDP effects

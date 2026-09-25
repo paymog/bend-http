@@ -1,7 +1,7 @@
-# DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950) over byte strings.
+# DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950) over byte strings. Source: https://github.com/paymog/bend-kit/tree/main/zlib
 import Base
 
-# Bytes are one Char per octet (0..255), as everywhere in bend-net.
+# Bytes are one Char per octet (0..255), as everywhere in bend-kit.
 
 def byte(h: Char) -> U32:
   Chr{c} = h

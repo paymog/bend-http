@@ -1,8 +1,8 @@
-# bend-net
+# bend-kit
 
-HTTP/1.1 client and server for Bend. `http` does `http://` and `https://`, DNS, redirects, and timeouts. Bodies are packed bytes (`Http.Body`).
+Libraries for Bend 2, starting with networking. `http` is an HTTP/1.1 client and server: `http://` and `https://`, DNS, redirects, and timeouts. Bodies are packed bytes (`Http.Body`). This project was called bend-net; its old hub names `bend-net-*` still resolve but get no new versions.
 
-`bend-net-http@0.14.0.0` is `http@0.13.1` moved to the Bend hub. It imports its sibling packages by name, so their types are shared with your code. `http@0.13.0` is a break from `http@0.12.0`: request and response bodies, stream pieces, and the wire bytes of `encode`, `encode_req`, and `exchange` are `Http.Body`. `http@0.13.1` adds `Http.Body`, `Http.from_string`, `Http.to_string`, and `Http.length`. `Req` and `Res` are `Type`, so a value is used once: its result type is `Result<&1, &1, Http.Err, Http.Res>`. `http@0.12.0` removed the client read internals (`need`, `fetch.gate`, `Sf`). `http@0.11.0` added `GotHead` to `Got`. `http@0.10.0` changed `exchange` to return the socket as `Maybe<Socket>`.
+`bend-kit-http@0.14.0.0` is `http@0.13.1` moved to the Bend hub. Each package's hub description links to its folder here. It imports its sibling packages by hash, so their types are shared with your code. `http@0.13.0` is a break from `http@0.12.0`: request and response bodies, stream pieces, and the wire bytes of `encode`, `encode_req`, and `exchange` are `Http.Body`. `http@0.13.1` adds `Http.Body`, `Http.from_string`, `Http.to_string`, and `Http.length`. `Req` and `Res` are `Type`, so a value is used once: its result type is `Result<&1, &1, Http.Err, Http.Res>`. `http@0.12.0` removed the client read internals (`need`, `fetch.gate`, `Sf`). `http@0.11.0` added `GotHead` to `Got`. `http@0.10.0` changed `exchange` to return the socket as `Maybe<Socket>`.
 
 ## Install
 
@@ -11,22 +11,22 @@ You need [Bend 2.0.27 or newer](https://bend-lang.com/install.sh) and [Bun 1.4.2
 The packages are on the Bend hub. Import one at the top of your file, and `bend` fetches it and checks it against its hash:
 
 ```bend
-import 0xea8f96f102b76dde4994886007251d17/http.bend as Http
+import 0x310b0480ce5b511ff8da9704b3d27ef3/http.bend as Http
 ```
 
 | Package | Import | What it does |
 |---|---|---|
-| `bend-net-http@0.14.0.0` | `0xea8f96f102b76dde4994886007251d17/http.bend` | HTTP/1.1 client and server for http and https, with DNS and TLS. |
-| `bend-net-bytes@0.2.0.0` | `bend-net-bytes@0.2.0.0/bytes.bend` | Byte buffers packed four bytes to a `U32`, with bounds-checked access. |
-| `bend-net-wire@0.4.0.0` | `bend-net-wire@0.4.0.0/wire.bend` | Byte-exact TCP, UDP, and TLS sockets. |
-| `bend-net-url@0.4.0.0` | `bend-net-url@0.4.0.0/url.bend` | URL parsing, resolution, and percent-encoding (RFC 3986). |
-| `bend-net-json@0.3.0.0` | `bend-net-json@0.3.0.0/json.bend` | JSON values, parsed and encoded as RFC 8259. |
-| `bend-net-encoding@0.2.1.0` | `bend-net-encoding@0.2.1.0/encoding.bend` | UTF-8 and hex encoding for byte strings. |
-| `bend-net-dns@0.3.1.0` | `0x70dd8459e2a121e9bbe04ea7e5f8ebb7/dns.bend` | DNS A-record lookup over UDP. |
-| `bend-net-zlib@0.1.0.0` | `0xfa97cc8246066bff0b9237beb9af14d2/zlib.bend` | DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950). |
-| `bend-net-router@0.1.1.0` | `0xee542cbbb769c012fbef4eac7dcba335/router.bend` | Match an HTTP method and path to a handler. |
+| `bend-kit-http@0.14.0.0` | `0x310b0480ce5b511ff8da9704b3d27ef3/http.bend` | HTTP/1.1 client and server for http and https, with DNS and TLS. |
+| `bend-kit-bytes@0.2.0.0` | `0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend` | Byte buffers packed four bytes to a `U32`, with bounds-checked access. |
+| `bend-kit-wire@0.4.0.0` | `0x8a1034c8824c5fdecbaa2e3d762aadad/wire.bend` | Byte-exact TCP, UDP, and TLS sockets. |
+| `bend-kit-url@0.4.0.0` | `0xd248560355ba8929ae030bc9c72f40be/url.bend` | URL parsing, resolution, and percent-encoding (RFC 3986). |
+| `bend-kit-json@0.3.0.0` | `0xaaa10a97bf5ac6990143da2c863f8a3f/json.bend` | JSON values, parsed and encoded as RFC 8259. |
+| `bend-kit-encoding@0.2.1.0` | `0xaec630f7a2f6b6ef96750f95d6e4195b/encoding.bend` | UTF-8 and hex encoding for byte strings. |
+| `bend-kit-dns@0.3.1.0` | `0xa12defba527c5f86a84d6fb74968f8ef/dns.bend` | DNS A-record lookup over UDP. |
+| `bend-kit-zlib@0.1.0.0` | `0xe01785b64266bf3ba0068183b9f9f5e3/zlib.bend` | DEFLATE, gzip, and zlib decoding (RFC 1951, 1952, 1950). |
+| `bend-kit-router@0.1.1.0` | `0xf2239decc78af956c471ebf7f2f50374/router.bend` | Match an HTTP method and path to a handler. |
 
-A name and its hash import the same package. `http` imports the others by name, so a `Json.Val`, `Url.Abs`, or body from your own import of `bend-net-json`, `bend-net-url`, or `bend-net-bytes` is the same type that `http` uses. `http` and `wire` ship `.c` and `.js` effects. They run host code. Proofs do not cover them.
+A name and its hash import the same package. `http` imports the others from the hub, so a `Json.Val`, `Url.Abs`, or body from your own import of `bend-kit-json`, `bend-kit-url`, or `bend-kit-bytes` is the same type that `http` uses. `http` and `wire` ship `.c` and `.js` effects. They run host code. Proofs do not cover them.
 
 HTTPS needs OpenSSL 3 at run time. On macOS, `brew install openssl@3`. The client looks for Homebrew's `libssl.3.dylib`, then `libssl.so.3`. Set `BEND_LIBSSL` to the library path if it is somewhere else.
 
@@ -87,7 +87,7 @@ Repeated `Set-Cookie` lines stay separate. Encode writes one line per value. A s
 
 ## Bodies
 
-A body is an `Http.Body`: bytes packed four to a `U32`. `Http.from_string(s)` makes one from a byte string (one `Char` per octet), and `Http.to_string(b)` turns it back. `Http.length(b)` returns the body and its length in bytes. `Http.Body` is `Bytes.Bytes` from `bend-net-bytes@0.2.0.0`, so you can also import that package and use it directly. `Http.text(res)` decodes the body as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
+A body is an `Http.Body`: bytes packed four to a `U32`. `Http.from_string(s)` makes one from a byte string (one `Char` per octet), and `Http.to_string(b)` turns it back. `Http.length(b)` returns the body and its length in bytes. `Http.Body` is `Bytes.Bytes` from `bend-kit-bytes@0.2.0.0`, so you can also import that package and use it directly. `Http.text(res)` decodes the body as UTF-8. A bad byte becomes U+FFFD. `Http.json(res)` parses that text. `Json.at(v, n)` is an array element. `Json.u32(v)` is a whole number that fits in `U32`. `Url.form(m)` is an `application/x-www-form-urlencoded` body. Space is `%20`.
 
 A response with `Transfer-Encoding` other than `chunked` is read until the connection closes. The bytes are not decoded. `Content-Length` together with `Transfer-Encoding` is rejected. A response over 16 MiB of body and 64 KiB of head is `ErrBad`. `Http.after(raw, head)` is the bytes after a complete self-delimited message, or `None` if the message is not finished or runs until close. `Http.encode_req(method, target, host, headers, body)` is the request as an `Http.Body`; `Http.encode_req.on(..., False)` sends `keep-alive`. `Http.exchange(tls, ms, close, head, socket, bytes)` writes one request on that socket. It returns `Some{socket}` when the socket can take another request, the result, and any bytes already read past the response.
 
@@ -95,7 +95,7 @@ A response with `Transfer-Encoding` other than `chunked` is read until the conne
 
 `fetch` sends `accept-encoding: gzip, deflate` unless you set `Accept-Encoding` yourself. It decodes the body per `Content-Encoding`: `gzip` and `x-gzip`, `deflate` with or without the zlib wrapper, and `identity`. A list of codings is undone in reverse order. An unknown coding, such as `br`, leaves the body as sent. A corrupt body is `ErrBad`. The headers stay as the server sent them, so `content-length` is the compressed size. `Http.decoded(res)` does the same for a response you got another way. `exchange` never decodes.
 
-The `bend-net-zlib` package has `Zlib.inflate` (raw DEFLATE, RFC 1951), `Zlib.gunzip` (RFC 1952, one member, CRC-32 and size checked), `Zlib.unzlib` (RFC 1950, Adler-32 checked), `Zlib.crc32`, and `Zlib.adler32`. Each returns `None` for malformed or cut-short input. A 1 MB body decodes in about 0.1 s natively.
+The `bend-kit-zlib` package has `Zlib.inflate` (raw DEFLATE, RFC 1951), `Zlib.gunzip` (RFC 1952, one member, CRC-32 and size checked), `Zlib.unzlib` (RFC 1950, Adler-32 checked), `Zlib.crc32`, and `Zlib.adler32`. Each returns `None` for malformed or cut-short input. A 1 MB body decodes in about 0.1 s natively.
 
 ## Streams
 

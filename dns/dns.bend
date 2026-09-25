@@ -1,9 +1,10 @@
-# DNS A-record lookup over UDP.
+# DNS A-record lookup over UDP. Source: https://github.com/paymog/bend-kit/tree/main/dns
 import Base
-import bend-net-wire@0.4.0.0/wire.bend as Wire
+# bend-kit-wire@0.4.0.0
+import 0x8a1034c8824c5fdecbaa2e3d762aadad/wire.bend as Wire
 
 # DNS A-record lookup (RFC 1035) over UDP. Messages are byte strings.
-#   import bend-net-dns@0.3.1.0/dns.bend as Dns
+#   import bend-kit-dns@0.3.1.0/dns.bend as Dns
 
 type Cur is Data:
   Cur{v: U32, rest: String}
