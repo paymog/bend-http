@@ -22,6 +22,20 @@ type Req is Type:
 type Res is Type:
   Res{status: U32, headers: Map<&2, List<&2, String>>, body: Bytes.Bytes}
 
+# Http ships its own copy of bytes, so callers name and build bodies through these.
+def Body() -> Type:
+  Bytes.Bytes
+
+# A byte string (one Char per octet) to a body, and back.
+def from_string(+s: String) -> Bytes.Bytes:
+  Bytes.from_string(s)
+
+def to_string(b: Bytes.Bytes) -> String:
+  Bytes.to_string(b)
+
+def length(b: Bytes.Bytes) -> Bytes.Bytes & U32:
+  Bytes.length(b)
+
 # Why fetch failed. Wire errors keep the errno and the text the effect already had.
 # ponytail: 60 and 110 are ETIMEDOUT on macOS and Linux. Windows is out of scope.
 type Err is Data:
