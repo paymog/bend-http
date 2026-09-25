@@ -1,4 +1,4 @@
-# Hex of each char as two nibbles.
+# UTF-8 and hex encoding for byte strings.
 import Base
 
 # Hex of each char as two nibbles. ASCII-oriented.
