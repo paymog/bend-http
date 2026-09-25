@@ -35,7 +35,7 @@ function wire_words(b, n) {
   for (let i = 0; i < n; i += 1) {
     a[i >> 2] = (a[i >> 2] | (b[i] << (8 * (i & 3)))) >>> 0;
   }
-  return { $: "Tuple", fst: n, snd: a };
+  return { $: CID(Tuple), fst: n, snd: a };
 }
 
 // null when n runs past the words.
@@ -126,7 +126,7 @@ function wire_send(socket, b, k) {
       }
       at += n;
     }
-    return io_tup(socket, io_done({ $: "Unit" }));
+    return io_tup(socket, io_done({ $: CID(Unit) }));
   };
   return go(0);
 }
@@ -178,7 +178,7 @@ function send_to(socket, host, port, data, k) {
       }
       return io_tup(socket, io_fail(code));
     }
-    return io_tup(socket, io_done({ $: "Unit" }));
+    return io_tup(socket, io_done({ $: CID(Unit) }));
   };
   return go();
 }
@@ -238,7 +238,7 @@ function tls_connect(socket, host, ms, k) {
   const at = wire_deadline(ms);
   const t = wire_tls();
   if (t === null) {
-    return io_tup(socket, { $: "Fail", error: io_tup(2,
+    return io_tup(socket, { $: CID(Fail), error: io_tup(2,
       "TLS needs OpenSSL 3 (libssl.3); set BEND_LIBSSL to its path") });
   }
   const s = t.s;
@@ -252,7 +252,7 @@ function tls_connect(socket, host, ms, k) {
   const fail = (why) => {
     s.SSL_free(ssl);
     t.by.delete(fd);
-    return io_tup(socket, { $: "Fail", error: io_tup(100, why) });
+    return io_tup(socket, { $: CID(Fail), error: io_tup(100, why) });
   };
   if (s.SSL_set_fd(ssl, fd) !== 1 || Number(s.SSL_ctrl(ssl, 55, 0n, name.p)) !== 1
     || s.SSL_set1_host(ssl, name.p) !== 1) {
@@ -261,7 +261,7 @@ function tls_connect(socket, host, ms, k) {
   const go = () => {
     const r = s.SSL_connect(ssl);
     if (r === 1) {
-      return io_tup(socket, io_done({ $: "Unit" }));
+      return io_tup(socket, io_done({ $: CID(Unit) }));
     }
     const err = s.SSL_get_error(ssl, r);
     if (err === 2 || err === 3) {
@@ -310,7 +310,7 @@ function wire_tls_send(socket, b, k) {
       }
       return io_tup(socket, io_fail(32));
     }
-    return io_tup(socket, io_done({ $: "Unit" }));
+    return io_tup(socket, io_done({ $: CID(Unit) }));
   };
   return go(0);
 }
@@ -347,7 +347,7 @@ function wire_tls_recv(socket, max, ms, k, out) {
     if (err === 6) {
       return io_tup(socket, io_done(out(b, 0)));
     }
-    return io_tup(socket, { $: "Fail", error: io_tup(5, "TLS read failed") });
+    return io_tup(socket, { $: CID(Fail), error: io_tup(5, "TLS read failed") });
   };
   return go();
 }
@@ -362,7 +362,7 @@ function tls_close(socket) {
     t.by.delete(socket);
   }
   io_sys().close(socket);
-  return { $: "Unit" };
+  return { $: CID(Unit) };
 }
 
 // Twin of connect in wire.c: a TCP connect with a deadline.
@@ -415,3 +415,17 @@ function connect(host, port, ms, k) {
   };
   return go();
 }
+
+io_eff(CID(connect), connect);
+io_eff(CID(recv), recv);
+io_eff(CID(send), send);
+io_eff(CID(recv_from), recv_from);
+io_eff(CID(send_to), send_to);
+io_eff(CID(tls.connect), tls_connect);
+io_eff(CID(tls.send), tls_send);
+io_eff(CID(tls.recv), tls_recv);
+io_eff(CID(tls.close), tls_close);
+io_eff(CID(recv.words), recv_words);
+io_eff(CID(send.words), send_words);
+io_eff(CID(tls.recv.words), tls_recv_words);
+io_eff(CID(tls.send.words), tls_send_words);
