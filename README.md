@@ -29,10 +29,11 @@ A name and its hash import the same package. Packages that depend on each other 
 | [`dns`](dns) | `0xa12defba527c5f86a84d6fb74968f8ef/dns.bend` | DNS A-record lookup over UDP. |
 | [`http`](http) | `0x310b0480ce5b511ff8da9704b3d27ef3/http.bend` | HTTP/1.1 client and server for http and https, with DNS and TLS. See [http/README.md](http/README.md). |
 | [`router`](router) | `0xf2239decc78af956c471ebf7f2f50374/router.bend` | Match an HTTP method and path to a handler. |
+| [`files`](files) | `./files/files.bend` (local; not yet published) | POSIX path operations, directory listing, metadata, mkdir, remove, rename, and private temp directories. |
 
 The hub versions are `bytes@0.2.0.0`, `encoding@0.2.1.0`, `json@0.3.0.0`, `zlib@0.1.0.0`, `url@0.4.0.0`, `wire@0.4.0.0`, `dns@0.3.1.0`, `http@0.14.0.0`, and `router@0.1.1.0`, each named `bend-kit-<package>`.
 
-`wire` and `http` ship `.c` and `.js` effects. They run host code, and proofs do not cover them.
+`wire`, `http`, and `files` ship `.c` and `.js` effects. They run host code, and proofs do not cover them.
 
 ## Layout
 
