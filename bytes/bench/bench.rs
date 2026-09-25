@@ -13,6 +13,16 @@ fn fill_buf(b: &mut [u8]) -> u32 {
     b[12345] as u32 + b[n - 1] as u32
 }
 
+fn build(n: usize) {
+    let t0 = Instant::now();
+    let mut out = Vec::new();
+    for i in 0..n {
+        out.push((i & 255) as u8);
+    }
+    let cs = n as u32 + out[n - 1] as u32;
+    println!("build_{n}\t{:.6}\t{cs}", t0.elapsed().as_secs_f64() * 1000.0);
+}
+
 fn main() {
     let l: u32 = std::env::args()
         .nth(1)
@@ -85,4 +95,6 @@ fn main() {
     println!("equal\t{ms:.6}\t{}", if eq { 1u32 } else { 0 });
 
     black_box(b);
+    build(1000000);
+    build(4000000);
 }

@@ -6,7 +6,7 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 RUNS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-OPS = ["fill", "sum", "find", "slice", "concat", "random", "equal"]
+OPS = ["fill", "sum", "find", "slice", "concat", "random", "equal", "build_1000000", "build_4000000"]
 ENV = {**os.environ, "BEND_NO_TELEMETRY": "1"}
 
 # name -> (build argv or None, run argv, scale). scale multiplies ms: string.bend runs at 64 MiB, the rest at 256 MiB.
@@ -71,6 +71,8 @@ def main():
     for op in OPS:
         cells = [f"{table[n][op]:,.1f} ({table[n][op] / best[op]:.1f}x)" if op in table[n] else "n/a" for n in names]
         print(f"| {op} | " + " | ".join(cells) + " |")
+    growth = [f"{table[n]['build_4000000'] / table[n]['build_1000000']:.1f}x" if "build_1000000" in table[n] else "n/a" for n in names]
+    print("| build (4M / 1M) | " + " | ".join(growth) + " |")
     geo = []
     for n in names:
         rs = [table[n][op] / best[op] for op in OPS if op in table[n]]

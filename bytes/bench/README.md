@@ -1,6 +1,6 @@
 # Bytes benchmark
 
-How fast could a Bend `Bytes` type be? This runs the same seven byte-buffer operations in two Bend layouts and five other languages.
+How fast could a Bend `Bytes` type be? This runs byte-buffer operations in two Bend layouts and five other languages.
 
 - `packed.bend` is the candidate: `Array<U32>`, 4 bytes per slot, little-endian.
 - `string.bend` is what bend-kit uses today: a `String`, one `Char` list cell per byte.
@@ -16,7 +16,7 @@ You need `bend`, `clang`, `rustc`, `go`, `bun`, `node`, and `python3`. Binaries 
 
 ## The ops
 
-Every program times each op in-process and prints its checksum. The buffer is N = 2^28 bytes (256 MiB). `bench.*` takes log2(N) as its first argument. The Bend files have N built in: 2^28 in `packed.bend`, and 2^26 in `string.bend`, since 256 MiB as a list takes more than 4 GiB. `run.py` multiplies the `String` times by 4. Checksum math is u32 and wraps.
+Every program times each op in-process and prints its checksum. Except for `build`, the buffer is N = 2^28 bytes (256 MiB). `bench.*` takes log2(N) as its first argument. The Bend files have N built in: 2^28 in `packed.bend`, and 2^26 in `string.bend`, since 256 MiB as a list takes more than 4 GiB. `run.py` multiplies the `String` times by 4. Checksum math is u32 and wraps.
 
 | op | work | checksum |
 |---|---|---|
@@ -27,14 +27,28 @@ Every program times each op in-process and prints its checksum. The buffer is N 
 | `concat` | append N/65536 new 64 KiB chunks (chunk k is filled with `k & 255`) to an empty buffer that is not preallocated | first + last byte |
 | `random` | 2^24 reads: `x = x*1664525 + 1013904223`, `idx = x >> (32 - log2 N)` | the sum |
 | `equal` | compare `b` with a copy of it (the copy is made before the timer starts) | 1 |
+| `build_1000000`, `build_4000000` | start empty; append bytes `i & 255` one at a time, without reserving capacity | size + last byte |
+
+The two `build` sizes use 1,000,000 and 4,000,000 bytes, not the 256 MiB used by the other ops. Bend Array calls `Bytes.append` with a one-byte buffer each time. Bend String has no build row: `string.bend` measures construction in `fill`, not incremental append.
 
 Each language uses its idiomatic stdlib calls: `memmem`/`memcmp` in C, `windows(4).position` in Rust, `bytes.Index`/`bytes.Equal` in Go, `Buffer.indexOf`/`Buffer.equals` in JS, and `bytes.find` in Python. There is no hand-written SIMD and no third-party code.
 
 In Bend, `sum` goes through the per-byte `byte(a, i)` read, which is what a `Bytes.get` caller would pay. `packed.bend` also prints two more ops that the table leaves out. `sum` reads a word at a time, and is slower (see below). `find_swar` skips words that hold no `\r`, but it does not beat the byte loop.
 
+## Build growth
+
+M4 Pro, macOS, Bend 2.0.28, 2026-09-25. Median of three runs, except Python (one run). Times are in ms.
+
+| bytes | C | Rust | Go | Bun | Node | Python | Bend Array |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1,000,000 | 0.3 | 0.3 | 0.4 | 4.5 | 3.1 | 34.6 | 8 |
+| 4,000,000 | 1.3 | 1.9 | 1.4 | 17.5 | 8.6 | 138.4 | 34 |
+
+Four times as many one-byte appends took Bend Array 4.25 times as long. This is consistent with linear growth; the two sizes do not prove an asymptotic bound.
+
 ## Results
 
-M4 Pro, macOS, Bend 2.0.25, 2026-09-24. Times are in ms; `Nx` is the multiple of the fastest variant for that op.
+Original seven-op results: M4 Pro, macOS, Bend 2.0.25, 2026-09-24. Times are in ms; `Nx` is the multiple of the fastest variant for that op.
 
 | op | C | Rust | Go | Bun | Node | Python | Bend Array | Bend String |
 |---|---|---|---|---|---|---|---|---|

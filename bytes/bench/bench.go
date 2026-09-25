@@ -86,6 +86,15 @@ func main() {
 	t0 = time.Now()
 	eq := bytes.Equal(b, c)
 	fmt.Printf("equal\t%.6f\t%d\n", float64(time.Since(t0).Microseconds())/1000.0, boolToU32(eq))
+	for _, size := range []int{1000000, 4000000} {
+		t0 = time.Now()
+		var built []byte
+		for i := range size {
+			built = append(built, byte(i&255))
+		}
+		cs = uint32(size) + uint32(built[size-1])
+		fmt.Printf("build_%d\t%.6f\t%d\n", size, float64(time.Since(t0).Microseconds())/1000.0, cs)
+	}
 }
 
 func boolToU32(b bool) uint32 {
