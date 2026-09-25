@@ -1057,3 +1057,164 @@ def get_put_other(
 def Laws.omap_get_put_other_key(K, V, cmp, refl, eq, flip, trans, m, tree, k2, k, ne, v):
   get_put_other(~K, ~V, ~cmp, ~refl, ~eq, ~flip, ~trans, m, None{}, None{}, k2, k, v, tree,
     {==}, {==}, neq_false(cmp(k2, k), ne))
+
+# A tree bounded above by a is bounded above by anything above a.
+def weaken_hi(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  t: O.OMap<K, V>, +lb: Maybe<&2, K>, +a: K, +ub: Maybe<&2, K>,
+  +e: {Laws.bounded(~K, ~V, ~cmp, t, lb, Some{a}) == True{} : Bool},
+  +eab: {Laws.below(~K, ~cmp, ub, a) == True{} : Bool}
+) -> {Laws.bounded(~K, ~V, ~cmp, t, lb, ub) == True{} : Bool}:
+  match t:
+    case O.OTip{}:
+      {==}
+    case O.OBin{s, +k, +v, +lo, +hi}:
+      bn.i(~K, ~V, ~cmp, lb, ub, k, v, lo, hi,
+        bn.a(~K, ~V, ~cmp, lb, Some{a}, k, v, lo, hi, e),
+        below_trans(~K, ~cmp, ~trans, ub, k, a,
+          bn.b(~K, ~V, ~cmp, lb, Some{a}, k, v, lo, hi, e), eab),
+        bn.l(~K, ~V, ~cmp, lb, Some{a}, k, v, lo, hi, e),
+        weaken_hi(~K, ~V, ~cmp, ~trans, hi, Some{k}, a, ub,
+          bn.h(~K, ~V, ~cmp, lb, Some{a}, k, v, lo, hi, e), eab))
+
+# What pop_min answers: its key lies between the bounds, and the rest lies above it.
+def PM(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>,
+  r: K & V & O.OMap<K, V>
+) -> Bool:
+  (+mk, mv, t) = r
+  Bool.and(Bool.and(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, ub, mk)),
+    Laws.bounded(~K, ~V, ~cmp, t, Some{mk}, ub))
+
+def pm.fin.bnd.go(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  +mk: K, +mv: V, +t: O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>, +k: K,
+  +v: V, +hi: O.OMap<K, V>,
+  +ih: {PM(~K, ~V, ~cmp, lb, Some{k}, {(mk, mv, t) : K & V & O.OMap<K, V>}) == True{} : Bool},
+  +eb: {Laws.below(~K, ~cmp, ub, k) == True{} : Bool},
+  eh: {Laws.bounded(~K, ~V, ~cmp, hi, Some{k}, ub) == True{} : Bool}
+) -> {PM(~K, ~V, ~cmp, lb, ub,
+       O.OMap.pop_min.fin(K, V, k, v, hi, {(mk, mv, t) : K & V & O.OMap<K, V>})) == True{} : Bool}:
+  +ab = Bool.and(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, Some{k}, mk))
+  +c = Laws.bounded(~K, ~V, ~cmp, t, Some{mk}, Some{k})
+  +eab = and_l(ab, c, ih)
+  +mkk = and_r(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, Some{k}, mk), eab)
+  and_i(Bool.and(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, ub, mk)),
+    Laws.bounded(~K, ~V, ~cmp, O.OMap.balance(K, V, k, v, t, hi), Some{mk}, ub),
+    and_i(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, ub, mk),
+      and_l(Laws.above(~K, ~cmp, lb, mk), Laws.below(~K, ~cmp, Some{k}, mk), eab),
+      below_trans(~K, ~cmp, ~trans, ub, mk, k, mkk, eb)),
+    balance.bnd(~K, ~V, ~cmp, ~trans, Some{mk}, ub, k, v, t, hi, mkk, eb,
+      and_r(ab, c, ih), eh))
+
+# Workaround for https://github.com/bendlang/bend/issues/1077: bind the tuple without +.
+def pm.fin.bnd(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  r: K & V & O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>, +k: K, +v: V,
+  +hi: O.OMap<K, V>,
+  ih: {PM(~K, ~V, ~cmp, lb, Some{k}, r) == True{} : Bool},
+  eb: {Laws.below(~K, ~cmp, ub, k) == True{} : Bool},
+  eh: {Laws.bounded(~K, ~V, ~cmp, hi, Some{k}, ub) == True{} : Bool}
+) -> {PM(~K, ~V, ~cmp, lb, ub, O.OMap.pop_min.fin(K, V, k, v, hi, r)) == True{} : Bool}:
+  (mk, rest) = r
+  (mv, t) = rest
+  pm.fin.bnd.go(~K, ~V, ~cmp, ~trans, mk, mv, t, lb, ub, k, v, hi, ih, eb, eh)
+
+def pm.bnd(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  lo: O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>, +k: K, +v: V,
+  +hi: O.OMap<K, V>,
+  +e: {Laws.bounded(~K, ~V, ~cmp, O.OBin{0, k, v, lo, hi}, lb, ub) == True{} : Bool}
+) -> {PM(~K, ~V, ~cmp, lb, ub, O.OMap.pop_min(K, V, lo, k, v, hi)) == True{} : Bool}:
+  match lo:
+    case O.OTip{}:
+      and_i(Bool.and(Laws.above(~K, ~cmp, lb, k), Laws.below(~K, ~cmp, ub, k)),
+        Laws.bounded(~K, ~V, ~cmp, hi, Some{k}, ub),
+        and_i(Laws.above(~K, ~cmp, lb, k), Laws.below(~K, ~cmp, ub, k),
+          bn.a(~K, ~V, ~cmp, lb, ub, k, v, O.OTip{}, hi, e),
+          bn.b(~K, ~V, ~cmp, lb, ub, k, v, O.OTip{}, hi, e)),
+        bn.h(~K, ~V, ~cmp, lb, ub, k, v, O.OTip{}, hi, e))
+    case O.OBin{s, +lk, +lv, +ll, +lh}:
+      +lo = {O.OBin{0, lk, lv, ll, lh} : O.OMap<K, V>}
+      pm.fin.bnd(~K, ~V, ~cmp, ~trans, O.OMap.pop_min(K, V, ll, lk, lv, lh), lb, ub, k, v, hi,
+        pm.bnd(~K, ~V, ~cmp, ~trans, ll, lb, Some{k}, lk, lv, lh,
+          bn.l(~K, ~V, ~cmp, lb, ub, k, v, lo, hi, e)),
+        bn.b(~K, ~V, ~cmp, lb, ub, k, v, lo, hi, e),
+        bn.h(~K, ~V, ~cmp, lb, ub, k, v, lo, hi, e))
+
+def glue.fin.bnd.go(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  +mk: K, +mv: V, +t: O.OMap<K, V>, +lo: O.OMap<K, V>, +lb: Maybe<&2, K>,
+  +ub: Maybe<&2, K>, +key: K,
+  eka: {Laws.above(~K, ~cmp, lb, key) == True{} : Bool},
+  el: {Laws.bounded(~K, ~V, ~cmp, lo, lb, Some{key}) == True{} : Bool},
+  +pmr: {PM(~K, ~V, ~cmp, Some{key}, ub, {(mk, mv, t) : K & V & O.OMap<K, V>}) == True{} : Bool}
+) -> {Laws.bounded(~K, ~V, ~cmp,
+       O.OMap.glue.fin(K, V, lo, {(mk, mv, t) : K & V & O.OMap<K, V>}), lb, ub) == True{} : Bool}:
+  +ab = Bool.and(Laws.above(~K, ~cmp, Some{key}, mk), Laws.below(~K, ~cmp, ub, mk))
+  +c = Laws.bounded(~K, ~V, ~cmp, t, Some{mk}, ub)
+  +eab = and_l(ab, c, pmr)
+  +km = and_l(Laws.above(~K, ~cmp, Some{key}, mk), Laws.below(~K, ~cmp, ub, mk), eab)
+  balance.bnd(~K, ~V, ~cmp, ~trans, lb, ub, mk, mv, lo, t,
+    above_trans(~K, ~cmp, ~trans, lb, key, mk, eka, km),
+    and_r(Laws.above(~K, ~cmp, Some{key}, mk), Laws.below(~K, ~cmp, ub, mk), eab),
+    weaken_hi(~K, ~V, ~cmp, ~trans, lo, lb, key, Some{mk}, el, km),
+    and_r(ab, c, pmr))
+
+# Workaround for https://github.com/bendlang/bend/issues/1077: bind the tuple without +.
+def glue.fin.bnd(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  r: K & V & O.OMap<K, V>, +lo: O.OMap<K, V>, +lb: Maybe<&2, K>,
+  +ub: Maybe<&2, K>, +key: K,
+  eka: {Laws.above(~K, ~cmp, lb, key) == True{} : Bool},
+  el: {Laws.bounded(~K, ~V, ~cmp, lo, lb, Some{key}) == True{} : Bool},
+  pmr: {PM(~K, ~V, ~cmp, Some{key}, ub, r) == True{} : Bool}
+) -> {Laws.bounded(~K, ~V, ~cmp, O.OMap.glue.fin(K, V, lo, r), lb, ub) == True{} : Bool}:
+  (mk, rest) = r
+  (mv, t) = rest
+  glue.fin.bnd.go(~K, ~V, ~cmp, ~trans, mk, mv, t, lo, lb, ub, key, eka, el, pmr)
+
+def glue.bnd(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  hi: O.OMap<K, V>, +lo: O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>,
+  +key: K,
+  eka: {Laws.above(~K, ~cmp, lb, key) == True{} : Bool},
+  ekb: {Laws.below(~K, ~cmp, ub, key) == True{} : Bool},
+  el: {Laws.bounded(~K, ~V, ~cmp, lo, lb, Some{key}) == True{} : Bool},
+  eh: {Laws.bounded(~K, ~V, ~cmp, hi, Some{key}, ub) == True{} : Bool}
+) -> {Laws.bounded(~K, ~V, ~cmp, O.OMap.glue(K, V, lo, hi), lb, ub) == True{} : Bool}:
+  match hi:
+    case O.OTip{}:
+      weaken_hi(~K, ~V, ~cmp, ~trans, lo, lb, key, ub, el, ekb)
+    case O.OBin{s, +k, +v, +hl, +hh}:
+      glue.fin.bnd(~K, ~V, ~cmp, ~trans, O.OMap.pop_min(K, V, hl, k, v, hh), lo, lb, ub, key,
+        eka, el, pm.bnd(~K, ~V, ~cmp, ~trans, hl, Some{key}, ub, k, v, hh, eh))
+
+def del.bnd(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, ~trans: Trans(~K, ~cmp),
+  t: O.OMap<K, V>, +lb: Maybe<&2, K>, +ub: Maybe<&2, K>, +k: K,
+  +bt: {Laws.bounded(~K, ~V, ~cmp, t, lb, ub) == True{} : Bool}
+) -> {Laws.bounded(~K, ~V, ~cmp, O.OMap.del(~K, ~V, ~cmp, t, k), lb, ub) == True{} : Bool}:
+  match t:
+    case O.OTip{}:
+      {==}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      +b_a = bn.a(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      +b_b = bn.b(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      +b_l = bn.l(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      +b_h = bn.h(~K, ~V, ~cmp, lb, ub, key, val, lo, hi, bt)
+      cmp.split(O.OMap<K, V>, Bool, y => Laws.bounded(~K, ~V, ~cmp, y, lb, ub), True{},
+        cmp(k, key),
+        u => O.OMap.balance(K, V, key, val, O.OMap.del(~K, ~V, ~cmp, lo, k), hi),
+        u => O.OMap.glue(K, V, lo, hi),
+        u => O.OMap.balance(K, V, key, val, lo, O.OMap.del(~K, ~V, ~cmp, hi, k)),
+        e => balance.bnd(~K, ~V, ~cmp, ~trans, lb, ub, key, val,
+          O.OMap.del(~K, ~V, ~cmp, lo, k), hi, b_a, b_b,
+          del.bnd(~K, ~V, ~cmp, ~trans, lo, lb, Some{key}, k, b_l), b_h),
+        e => glue.bnd(~K, ~V, ~cmp, ~trans, hi, lo, lb, ub, key, b_a, b_b, b_l, b_h),
+        e => balance.bnd(~K, ~V, ~cmp, ~trans, lb, ub, key, val, lo,
+          O.OMap.del(~K, ~V, ~cmp, hi, k), b_a, b_b, b_l,
+          del.bnd(~K, ~V, ~cmp, ~trans, hi, Some{key}, ub, k, b_h)))
+
+def Laws.omap_del_searchtree(K, V, cmp, refl, eq, flip, trans, m, tree, k):
+  del.bnd(~K, ~V, ~cmp, ~trans, m, None{}, None{}, k, tree)
