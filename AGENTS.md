@@ -43,3 +43,8 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - Packages publish to the Bend hub as `bend-kit-<package>`: run `bend login`, then `bend <file>.bend --publish bend-kit-<package>@<a.b.c.d>` from the package folder. Names are 12 to 64 characters of `a-z`, `0-9`, and `-`, and versions have four numbers. A publish is permanent, and a breaking change needs a new version.
 - `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.
+
+## GitHub issues
+
+- Express every dependency between issues as a native GitHub "blocked by" link, not only as text in the body. After `gh issue create`, add each link: `gh api -X POST repos/paymog/bend-kit/issues/<N>/dependencies/blocked_by -F issue_id=$(gh api repos/paymog/bend-kit/issues/<blocker> --jq .id)`. The `issue_id` is the blocker's database id, not its number.
+- When you file a follow-up, check whether it blocks or is blocked by an open issue, and add those links too.
