@@ -52,6 +52,15 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.
 
+## Benchmarks
+
+A package's `bench/` times its hot path on one fixed input, in Bend and in C, Rust, Python, and JavaScript.
+
+- Compare against each language's standard library only. When a language's standard library has no equivalent, leave that language out and say so in the README.
+- Do not reimplement the package in another language, and do not add a third-party dependency.
+- `bench/README.md` records the command, the input, the language versions, and the times. Every program prints a checksum, and the checksums agree.
+- Run a bench by hand. `scripts/check.sh` and CI do not run it.
+
 ## Worktrees
 
 Do all work in a git worktree. Never edit or commit on the primary checkout. Read `skill://ce-worktree` and follow it before the first edit.
