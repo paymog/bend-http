@@ -1,4 +1,4 @@
-# HTTP/1.1 client and server for http and https, with DNS and TLS. Source: https://github.com/paymog/bend-kit
+# HTTP/1.1 client and server for http and https, with DNS and TLS. Source: https://github.com/paymog/bend-kit/tree/main/http
 import Base
 # By hash: bend-kit-wire@0.4.0.0, -url@0.4.0.0, -encoding@0.2.1.0, -json@0.3.0.0, -bytes@0.2.0.0, -dns@0.3.1.0, -zlib@0.1.0.0.
 import 0x8a1034c8824c5fdecbaa2e3d762aadad/wire.bend as Wire
