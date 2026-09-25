@@ -51,6 +51,10 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.
 
+## Worktrees
+
+Do all work in a git worktree. Never edit or commit on the primary checkout. Read `skill://ce-worktree` and follow it before the first edit.
+
 ## Delivery
 
 - Finish coding work with a pull request. Commit and push the branch, then open a PR before reporting the work done.
