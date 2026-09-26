@@ -47,22 +47,23 @@ Versions: Bend 2.0.29, Apple clang 17.0.0, Python 3.14.6, Bun 1.3.14, Node v24.0
 
 | op | C | Python | Bun | Node | Bend |
 |---|---:|---:|---:|---:|---:|
-| is_match | 0.0 | 0.3 | 0.2 | 0.2 | 119.0 |
-| is_match_early | 0.0 | 0.0 | 0.1 | 0.1 | 6.0 |
-| find_captures | 15.2 | 2.9 | 0.8 | 0.7 | 722.0 |
+| is_match | 0.0 | 0.3 | 0.2 | 0.2 | 37.0 |
+| is_match_early | 0.0 | 0.0 | 0.1 | 0.1 | 7.0 |
+| find_captures | 17.1 | 3.1 | 0.9 | 0.7 | 735.0 |
 | find_early | 0.0 | 0.0 | 0.2 | 0.2 | 7.0 |
-| redos | 3.1 | timeout | 877.4 | timeout | 133.0 |
+| redos | 3.6 | timeout | 882.6 | timeout | 139.0 |
 
 Checksums (1 MiB text): `is_match` 1, `is_match_early` 1, `find_captures` 3021334545, `find_early` 1923, `redos` 0. All non-timeout variants agree.
 
 ### History
 
-Bend times in ms, one run each of the same bench build against each version of `regex.bend`.
+Bend times in ms, median of three runs of the same bench against each version of `regex.bend`.
 
 | change | is_match | is_match_early | find_captures | find_early |
 |---|---:|---:|---:|---:|
 | before #97 | 140 | 18 | 726 | 17 |
 | #97: stop once the match is settled; `is_match` skips captures | 118 | 7 | 727 | 7 |
+| #98: skip chars that cannot start a match | 37 | 7 | 735 | 7 |
 
 ## Caveats
 
