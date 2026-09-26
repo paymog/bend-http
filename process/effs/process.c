@@ -39,9 +39,9 @@
 
 static Term process_bytes(Env e, const char* p, u64 n) {
   Term s    = term_pak(CID_SNIL, 0);
-  Loc  hole = 0;
+  u64  hole = 0;
   for (u64 i = 0; i < n; i += 1) {
-    Loc  l = heap_alloc(e, 1);
+    u64  l = heap_alloc(e, 1);
     Term t = term_ctr(CID_SCON, l);
     e.mem[l] = (uint8_t)p[i];
     if (hole == 0) {
