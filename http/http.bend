@@ -213,7 +213,7 @@ def split_colon.go(s: String, acc: String, hit: Bool) -> String & String:
         case True{}:
           take.cut(acc, SCon{Chr{c}, t})
         case False{}:
-          split_colon.go(t, SCon{Chr{c}, acc}, U32.is_eq(c, 58))
+          split_colon.go(t, SCon{Char.to_lower(Chr{c}), acc}, U32.is_eq(c, 58))
 
 def split_colon(+s: String) -> String & String:
   split_colon.go(s, SNil{}, False{})
@@ -243,7 +243,7 @@ def fields_put.key(+m: Map<&2, List<&2, String>>, +k: String, v: String) -> Fiel
 
 def fields_put.kv(m: Map<&2, List<&2, String>>, kv: String & String) -> Fields:
   (k, v) = kv
-  fields_put.key(m, String.to_lower(k), String.trim(v))
+  fields_put.key(m, k, String.trim(v))
 
 def fields_put.fold(m: Map<&2, List<&2, String>>, line: String, fold: Bool) -> Fields:
   match fold:
@@ -765,6 +765,7 @@ def parse.lines(xs: List<&2, String>, rest: String) -> Got:
       GotBad{}
     case Con{line, headers}:
       parse.start3(start_line(line), headers, rest)
+
 
 def parse.head(+head: String, rest: String, whole: Bool) -> Got:
   match whole:
