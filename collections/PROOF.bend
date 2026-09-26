@@ -1,6 +1,7 @@
 import Base
 import ./LAWS.bend as Laws
 import ./omap.bend as O
+import ./nat_order.bend as Ord
 
 def Laws.omap_keys_ascending_puts():
   {==}
@@ -1245,3 +1246,5 @@ def Laws.omap_put_m3_key4_weight_balanced():
 
 def Laws.omap_del_m7_key4_weight_balanced():
   {==}
+
+
