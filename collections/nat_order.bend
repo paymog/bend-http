@@ -15,6 +15,29 @@ def absurd_b(e: {False{} == True{} : Bool}) -> Empty:
 def exfalso(-A: Type, e: Empty) -> A:
   match e:
 
+def and_l(a: Bool, b: Bool, e: {Bool.and(a, b) == True{} : Bool}) -> {a == True{} : Bool}:
+  match a:
+    case True{}:
+      {==}
+    case False{}:
+      exfalso({False{} == True{} : Bool}, absurd_b(e))
+
+def and_r(a: Bool, b: Bool, e: {Bool.and(a, b) == True{} : Bool}) -> {b == True{} : Bool}:
+  match a:
+    case True{}:
+      e
+    case False{}:
+      exfalso({b == True{} : Bool}, absurd_b(e))
+
+def and_i(
+  a: Bool, b: Bool, ea: {a == True{} : Bool}, eb: {b == True{} : Bool}
+) -> {Bool.and(a, b) == True{} : Bool}:
+  match a:
+    case True{}:
+      eb
+    case False{}:
+      exfalso({Bool.and(False{}, b) == True{} : Bool}, absurd_b(ea))
+
 def not_le_suc_zero(p: Nat) -> {Nat.is_le(1n+p, 0n) == False{} : Bool}:
   match p:
     case 0n:
@@ -177,3 +200,50 @@ def le_add_tail(+a: Nat, +b: Nat, +c: Nat, e: {Nat.is_le(a, b) == True{} : Bool}
   -> {Nat.is_le(a, Nat.add(b, c)) == True{} : Bool}:
   le_trans(a, b, Nat.add(b, c), e, le_b_add_c(b, c))
 
+# --- weight_ok on Nat ---------------------------------------------------------
+
+def mul2(+a: Nat) -> Nat:
+  Nat.mul(2n, a)
+
+def mul3(+a: Nat) -> Nat:
+  Nat.mul(3n, a)
+
+def wok(+wl: Nat, +wh: Nat) -> Bool:
+  Bool.and(Nat.is_le(wh, mul3(wl)), Nat.is_le(wl, mul3(wh)))
+
+def wok_l(+wl: Nat, +wh: Nat, e: {wok(wl, wh) == True{} : Bool})
+  -> {Nat.is_le(wh, mul3(wl)) == True{} : Bool}:
+  and_l(Nat.is_le(wh, mul3(wl)), Nat.is_le(wl, mul3(wh)), e)
+
+def wok_r(+wl: Nat, +wh: Nat, e: {wok(wl, wh) == True{} : Bool})
+  -> {Nat.is_le(wl, mul3(wh)) == True{} : Bool}:
+  and_r(Nat.is_le(wh, mul3(wl)), Nat.is_le(wl, mul3(wh)), e)
+
+def wok_i(+wl: Nat, +wh: Nat, el: {Nat.is_le(wh, mul3(wl)) == True{} : Bool},
+  er: {Nat.is_le(wl, mul3(wh)) == True{} : Bool}) -> {wok(wl, wh) == True{} : Bool}:
+  and_i(Nat.is_le(wh, mul3(wl)), Nat.is_le(wl, mul3(wh)), el, er)
+
+
+def add_0_l(+b: Nat) -> {Nat.add(0n, b) == b : Nat}:
+  match b:
+    case 0n:
+      {==}
+    case 1n+p:
+      {==}
+
+def add_cancel_l0(+b: Nat, +c: Nat, e: {Nat.add(0n, b) == Nat.add(0n, c) : Nat}) -> {b == c : Nat}:
+  rw(Nat, x => {x == c : Nat}, b, Nat.add(0n, b), add_0_l(b),
+    rw(Nat, x => {Nat.add(0n, b) == x : Nat}, c, Nat.add(0n, c), add_0_l(c), e))
+
+def one_le_suc(+p: Nat) -> {Nat.is_le(1n, 1n+p) == True{} : Bool}:
+  match p:
+    case 0n:
+      {==}
+    case 1n+pp:
+      le_trans(1n, 1n+pp, 1n+1n+pp, one_le_suc(pp),
+        rw(Nat, x => {Nat.is_le(1n+pp, x) == True{} : Bool}, 1n+1n+pp, Nat.add(1n, 1n+pp),
+          add_succ_right(1n, pp), le_suc(1n+pp)))
+
+
+# Rotation / eq_add1 chain pending (#116): eq_add1_succ, le_one_of_add3,
+# le_hl_mul3_wl (hh>1), le_wl_mul3_hl, rot_lo_single_inner/outer.

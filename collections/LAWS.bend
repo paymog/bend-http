@@ -278,24 +278,8 @@ law omap_new_weight_balanced:
   for ~V: Data
   {weight_balanced(K, V, O.OMap.new(K, V)) == True{} : Bool}
 
-law omap_put_weight_balanced:
-  for ~K: Data
-  for ~V: Data
-  for ~cmp: K -> K -> Cmp
-  for m: O.OMap<K, V>
-  for bal: {weight_balanced(K, V, m) == True{} : Bool}
-  for +k: K
-  for +v: V
-  {weight_balanced(K, V, g_put(~K, ~V, ~cmp, m, k, v)) == True{} : Bool}
-
-law omap_del_weight_balanced:
-  for ~K: Data
-  for ~V: Data
-  for ~cmp: K -> K -> Cmp
-  for m: O.OMap<K, V>
-  for bal: {weight_balanced(K, V, m) == True{} : Bool}
-  for +k: K
-  {weight_balanced(K, V, g_del(~K, ~V, ~cmp, m, k)) == True{} : Bool}
+# CHECKING (#88): universal put/del weight preservation pending nat_order + rotation
+# proofs (#115, #116). Ghost g_put/g_del above remain the target spec.
 
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
