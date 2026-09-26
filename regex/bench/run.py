@@ -38,10 +38,7 @@ def parse(text):
 
 
 def run_op(name, cmd, op):
-    if name == "Bend":
-        args = cmd(op)
-    else:
-        args = cmd(op) + ["1048576", op]
+    args = cmd(op) + ([] if name == "Bend" else ["1048576"]) + [op]
     try:
         r = subprocess.run(args, cwd=HERE, env=ENV, capture_output=True, text=True, timeout=TIMEOUT[op])
     except subprocess.TimeoutExpired:

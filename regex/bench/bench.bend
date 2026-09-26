@@ -56,14 +56,36 @@ def op.redos() -> IO(Unit):
   do IO<Unit>:
     with_re(R.compile("(a*)*b"), String.repeat("a", 100000n), "redos")
 
-def run_text(+s: String) -> IO(Unit):
+def run_all(+s: String) -> IO(Unit):
   do IO<Unit>:
     op.is_match(s)
     op.find_captures(s)
     op.redos()
 
-def run(+size: Nat) -> IO(Unit):
-  run_text(text(size))
+def run_text(+s: String, +only: String) -> IO(Unit):
+  match only:
+    case "":
+      run_all(s)
+    case "is_match":
+      op.is_match(s)
+    case "find_captures":
+      op.find_captures(s)
+    case "redos":
+      op.redos()
+    case _:
+      IO.print("error")
+
+def first(args: List<&1, String>) -> String:
+  match args:
+    case Con{h, t}:
+      h
+    case Nil{}:
+      ""
+
+def run(+size: Nat, +only: String) -> IO(Unit):
+  run_text(text(size), only)
 
 def main() -> IO(Unit):
-  run(1048576n)
+  do IO<Unit>:
+    args : List<&1, String> <- IO.args()
+    run(1048576n, first(args))
