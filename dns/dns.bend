@@ -1,10 +1,11 @@
-# DNS A-record lookup over UDP. Source: https://github.com/paymog/bend-kit/tree/main/dns
+# DNS codec and host lookup. Source: https://github.com/paymog/bend-kit/tree/main/dns
 import Base
 # bend-kit-wire@0.4.0.2
 import 0xb481bb64f1136053b0a6b2c6da6277ab/wire.bend as Wire
 
-# DNS A-record lookup (RFC 1035) over UDP. Messages are byte strings.
-#   import bend-kit-dns@0.3.1.1/dns.bend as Dns
+# query, answer, and resolve.pure are pure; PROOF.bend covers them, not effs/.
+# resolve uses the OS resolver (IPv4 A only, same Maybe<String> as before).
+#   import bend-kit-dns@0.3.2.0/dns.bend as Dns
 
 type Cur is Data:
   Cur{v: U32, rest: String}
@@ -584,12 +585,31 @@ def resolve.hosts(+name: String, r: Result<&1, &1, U32 & String, File>) -> IO(Ma
         m : File & Result<&1, &1, U32 & String, String> <- File.read(f, 65536)
         resolve.opened(name, m)
 
-# An IPv4 address for host: literals as is, localhost (RFC 6761), /etc/hosts, else DNS.
+def lookup(host: String) -> IO(Result<&1, &1, U32 & String, String>):
+  import "./effs/dns.c"
+  import "./effs/dns.js"
+
+def resolve.got(r: Result<&1, &1, U32 & String, String>) -> IO(Maybe<&2, String>):
+  match r:
+    case Fail{e}:
+      none()
+    case Done{ip}:
+      IO.pure(Maybe<&2, String>, Some{ip})
+
+def resolve.os(+name: String) -> IO(Maybe<&2, String>):
+  do IO<Maybe<&2, String>>:
+    r : Result<&1, &1, U32 & String, String> <- lookup(name)
+    resolve.got(r)
+
+# An IPv4 address for host: literals as is, localhost (RFC 6761), /etc/hosts, else UDP DNS.
 # ponytail: no AAAA, no TCP retry on TC
 def resolve.ask(+name: String) -> IO(Maybe<&2, String>):
   do IO<Maybe<&2, String>>:
     f : Result<&1, &1, U32 & String, File> <- File.open("/etc/hosts", "r")
     resolve.hosts(name, f)
 
-def resolve(+host: String) -> IO(Maybe<&2, String>):
+def resolve.pure(+host: String) -> IO(Maybe<&2, String>):
   Bool.pick(IO(Maybe<&2, String>), ipv4(host), IO.pure(Maybe<&2, String>, Some{host}), Bool.pick(IO(Maybe<&2, String>), String.eq(host, "localhost"), IO.pure(Maybe<&2, String>, Some{"127.0.0.1"}), resolve.ask(String.to_lower(host))))
+
+def resolve(+host: String) -> IO(Maybe<&2, String>):
+  Bool.pick(IO(Maybe<&2, String>), ipv4(host), IO.pure(Maybe<&2, String>, Some{host}), Bool.pick(IO(Maybe<&2, String>), String.eq(host, "localhost"), IO.pure(Maybe<&2, String>, Some{"127.0.0.1"}), resolve.os(String.to_lower(host))))
