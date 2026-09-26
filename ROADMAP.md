@@ -2,7 +2,7 @@
 
 The goal is a general-purpose library for Bend 2: the packages a program needs that Base does not have, each proved against its laws. This is a ranked backlog, not a promise. The top of **Next** is what we work on now. Each checkbox is one outcome. Re-rank items when evidence changes.
 
-New packages are tracked as GitHub issues with a `tier-1`, `tier-2`, or `tier-3` label: tier 1 is what most programs need first, tier 3 is what can wait. `gh issue list --label tier-1` lists one tier. Each new package gets its own folder; see the layout in [README.md](README.md).
+New packages are tracked as GitHub issues with a `pri-high`, `pri-med`, or `pri-low` label: high is what most programs need first, low is what can wait. `gh issue list --label pri-high` lists one priority. Each new package gets its own folder; see the layout in [README.md](README.md).
 
 ## Current baseline
 
