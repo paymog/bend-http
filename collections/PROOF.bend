@@ -1,6 +1,7 @@
 import Base
 import ./LAWS.bend as Laws
 import ./omap.bend as O
+import ./nat_order.bend as Ord
 
 def Laws.omap_keys_ascending_puts():
   {==}
@@ -144,6 +145,20 @@ def c4.i(
 ) -> {Bool.and(Bool.and(Bool.and(a, b), c), d) == True{} : Bool}:
   and_i(Bool.and(Bool.and(a, b), c), d,
     and_i(Bool.and(a, b), c, and_i(a, b, ea, eb), ec), ed)
+
+
+def c3.a(+a: Bool, +b: Bool, +c: Bool, e: {Bool.and(Bool.and(a, b), c) == True{} : Bool}) -> {a == True{} : Bool}:
+  and_l(a, b, and_l(Bool.and(a, b), c, e))
+
+def c3.b(+a: Bool, +b: Bool, +c: Bool, e: {Bool.and(Bool.and(a, b), c) == True{} : Bool}) -> {b == True{} : Bool}:
+  and_r(a, b, and_l(Bool.and(a, b), c, e))
+
+def c3.c(+a: Bool, +b: Bool, +c: Bool, e: {Bool.and(Bool.and(a, b), c) == True{} : Bool}) -> {c == True{} : Bool}:
+  and_r(Bool.and(a, b), c, e)
+
+def c3.i(+a: Bool, +b: Bool, +c: Bool, ea: {a == True{} : Bool}, eb: {b == True{} : Bool}, ec: {c == True{} : Bool})
+  -> {Bool.and(Bool.and(a, b), c) == True{} : Bool}:
+  and_i(Bool.and(a, b), c, and_i(a, b, ea, eb), ec)
 
 def Laws.omap_new_searchtree(K, V, cmp):
   {==}
@@ -1218,3 +1233,540 @@ def del.bnd(
 
 def Laws.omap_del_searchtree(K, V, cmp, refl, eq, flip, trans, m, tree, k):
   del.bnd(~K, ~V, ~cmp, ~trans, m, None{}, None{}, k, tree)
+
+def Laws.omap_new_weight_balanced(K, V):
+  {==}
+
+# --- weight balance -------------------------------------------------------------
+
+def W(-K: Data, -V: Data, t: O.OMap<K, V>) -> Nat:
+  Laws.omap_weight(K, V, t)
+
+def WB(-K: Data, -V: Data, t: O.OMap<K, V>) -> Bool:
+  Laws.weight_balanced(K, V, t)
+
+# t is balanced and its weight is within one of n.
+def PW(-K: Data, -V: Data, +n: Nat, +t: O.OMap<K, V>) -> Bool:
+  Bool.and(WB(K, V, t), Ord.near(n, W(K, V, t)))
+
+def PMW(-K: Data, -V: Data, +n: Nat, r: K & V & O.OMap<K, V>) -> Bool:
+  (mk, mv, t) = r
+  PW(K, V, n, t)
+
+def pos_add(a: Nat, +b: Nat, e: Ord.LE(1n, a)) -> Ord.LE(1n, Nat.add(a, b)):
+  match a:
+    case 0n:
+      exfalso(Ord.LE(1n, b), absurd_b(e))
+    case 1n+p:
+      Ord.le_zero(Nat.add(p, b))
+
+def w_pos(-K: Data, -V: Data, t: O.OMap<K, V>) -> Ord.LE(1n, W(K, V, t)):
+  match t:
+    case O.OTip{}:
+      {==}
+    case O.OBin{s, k, v, +lo, +hi}:
+      pos_add(W(K, V, lo), W(K, V, hi), w_pos(K, V, lo))
+
+def wb.ok(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  e: {WB(K, V, O.OBin{0, k, v, lo, hi}) == True{} : Bool}
+) -> {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool}:
+  c3.a(Laws.weight_ok(W(K, V, lo), W(K, V, hi)), WB(K, V, lo), WB(K, V, hi), e)
+
+def wb.l(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  e: {WB(K, V, O.OBin{0, k, v, lo, hi}) == True{} : Bool}
+) -> {WB(K, V, lo) == True{} : Bool}:
+  c3.b(Laws.weight_ok(W(K, V, lo), W(K, V, hi)), WB(K, V, lo), WB(K, V, hi), e)
+
+def wb.h(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  e: {WB(K, V, O.OBin{0, k, v, lo, hi}) == True{} : Bool}
+) -> {WB(K, V, hi) == True{} : Bool}:
+  c3.c(Laws.weight_ok(W(K, V, lo), W(K, V, hi)), WB(K, V, lo), WB(K, V, hi), e)
+
+def wb.i(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  eo: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  el: {WB(K, V, lo) == True{} : Bool}, eh: {WB(K, V, hi) == True{} : Bool}
+) -> {WB(K, V, O.OBin{0, k, v, lo, hi}) == True{} : Bool}:
+  c3.i(Laws.weight_ok(W(K, V, lo), W(K, V, hi)), WB(K, V, lo), WB(K, V, hi), eo, el, eh)
+
+# Rotations toward lo, after hi grew or lo shrank by one.
+def rls.wb(
+  -K: Data, -V: Data, +k: K, +v: V, +lo: O.OMap<K, V>, +hk: K, +hv: V,
+  +hl: O.OMap<K, V>, +hh: O.OMap<K, V>,
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  +wbh: {WB(K, V, O.OBin{0, hk, hv, hl, hh}) == True{} : Bool},
+  +heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, lo)), Nat.add(W(K, V, hl), W(K, V, hh))),
+  +alm: Ord.LE(Nat.add(W(K, V, hl), W(K, V, hh)), Nat.add(3n, Nat.mul(3n, W(K, V, lo)))),
+  +hs: Ord.LE(1n+W(K, V, hl), Nat.mul(2n, W(K, V, hh)))
+) -> {WB(K, V, O.OMap.bin(K, V, hk, hv, O.OMap.bin(K, V, k, v, lo, hl), hh)) == True{} : Bool}:
+  +l = W(K, V, lo)
+  +a = W(K, V, hl)
+  +b = W(K, V, hh)
+  +okh = wb.ok(K, V, hk, hv, hl, hh, wbh)
+  +h1 = Ord.wok_r(a, b, okh)
+  +h2 = Ord.wok_l(a, b, okh)
+  +pl = w_pos(K, V, lo)
+  +pa = w_pos(K, V, hl)
+  +pb = w_pos(K, V, hh)
+  wb.i(K, V, hk, hv, O.OMap.bin(K, V, k, v, lo, hl), hh,
+    Ord.rls.w1(l, a, b, h1, h2, heavy, alm, hs, pl, pa, pb),
+    wb.i(K, V, k, v, lo, hl, Ord.rls.w0(l, a, b, h1, h2, heavy, alm, hs, pl, pa, pb), wbl,
+      wb.l(K, V, hk, hv, hl, hh, wbh)),
+    wb.h(K, V, hk, hv, hl, hh, wbh))
+
+def rld.wb(
+  -K: Data, -V: Data, hl: O.OMap<K, V>, +k: K, +v: V, +lo: O.OMap<K, V>, +hk: K, +hv: V,
+  +hh: O.OMap<K, V>,
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  +wbh: {WB(K, V, O.OBin{0, hk, hv, hl, hh}) == True{} : Bool},
+  +heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, lo)), Nat.add(W(K, V, hl), W(K, V, hh))),
+  +alm: Ord.LE(Nat.add(W(K, V, hl), W(K, V, hh)), Nat.add(3n, Nat.mul(3n, W(K, V, lo)))),
+  +hd: Ord.LE(Nat.mul(2n, W(K, V, hh)), W(K, V, hl))
+) -> {WB(K, V, O.OMap.rot_lo.double(K, V, k, v, lo, hk, hv, hl, hh)) == True{} : Bool}:
+  match hl:
+    case O.OTip{}:
+      exfalso({WB(K, V, O.OMap.rot_lo.double(K, V, k, v, lo, hk, hv, O.OTip{}, hh)) == True{} : Bool},
+        Ord.dtip(W(K, V, hh), hd, w_pos(K, V, hh)))
+    case O.OBin{s, +mk, +mv, +ml, +mh}:
+      +hl = {O.OBin{0, mk, mv, ml, mh} : O.OMap<K, V>}
+      +l = W(K, V, lo)
+      +x = W(K, V, ml)
+      +y = W(K, V, mh)
+      +b = W(K, V, hh)
+      +okh = wb.ok(K, V, hk, hv, hl, hh, wbh)
+      +h1 = Ord.wok_r(Nat.add(x, y), b, okh)
+      +h2 = Ord.wok_l(Nat.add(x, y), b, okh)
+      +wbm = wb.l(K, V, hk, hv, hl, hh, wbh)
+      +okm = wb.ok(K, V, mk, mv, ml, mh, wbm)
+      +h5 = Ord.wok_r(x, y, okm)
+      +h6 = Ord.wok_l(x, y, okm)
+      +pl = w_pos(K, V, lo)
+      +px = w_pos(K, V, ml)
+      +py = w_pos(K, V, mh)
+      +pb = w_pos(K, V, hh)
+      wb.i(K, V, mk, mv, O.OMap.bin(K, V, k, v, lo, ml), O.OMap.bin(K, V, hk, hv, mh, hh),
+        Ord.rld.w0(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+        wb.i(K, V, k, v, lo, ml, Ord.rld.w1(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+          wbl, wb.l(K, V, mk, mv, ml, mh, wbm)),
+        wb.i(K, V, hk, hv, mh, hh, Ord.rld.w2(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+          wb.h(K, V, mk, mv, ml, mh, wbm), wb.h(K, V, hk, hv, hl, hh, wbh)))
+
+def rlp.wb(
+  -K: Data, -V: Data, single: Bool, +k: K, +v: V, +lo: O.OMap<K, V>, +hk: K, +hv: V,
+  +hl: O.OMap<K, V>, +hh: O.OMap<K, V>,
+  es: {Nat.is_lt(W(K, V, hl), Nat.mul(2n, W(K, V, hh))) == single : Bool},
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  wbh: {WB(K, V, O.OBin{0, hk, hv, hl, hh}) == True{} : Bool},
+  heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, lo)), Nat.add(W(K, V, hl), W(K, V, hh))),
+  alm: Ord.LE(Nat.add(W(K, V, hl), W(K, V, hh)), Nat.add(3n, Nat.mul(3n, W(K, V, lo))))
+) -> {WB(K, V, O.OMap.rot_lo.pick(K, V, single, k, v, lo, hk, hv, hl, hh)) == True{} : Bool}:
+  match single:
+    case True{}:
+      rls.wb(K, V, k, v, lo, hk, hv, hl, hh, wbl, wbh, heavy, alm,
+        Ord.lt_le(W(K, V, hl), Nat.mul(2n, W(K, V, hh)), es))
+    case False{}:
+      rld.wb(K, V, hl, k, v, lo, hk, hv, hh, wbl, wbh, heavy, alm,
+        Ord.nlt_le(W(K, V, hl), Nat.mul(2n, W(K, V, hh)), es))
+
+def rl.wb(
+  -K: Data, -V: Data, hi: O.OMap<K, V>, +k: K, +v: V, +lo: O.OMap<K, V>,
+  wbl: {WB(K, V, lo) == True{} : Bool}, +wbh: {WB(K, V, hi) == True{} : Bool},
+  heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, lo)), W(K, V, hi)),
+  alm: Ord.LE(W(K, V, hi), Nat.add(3n, Nat.mul(3n, W(K, V, lo))))
+) -> {WB(K, V, Laws.g_rot_lo(K, V, k, v, lo, hi)) == True{} : Bool}:
+  match hi:
+    case O.OTip{}:
+      exfalso({WB(K, V, Laws.g_rot_lo(K, V, k, v, lo, O.OTip{})) == True{} : Bool},
+        Ord.tiph(W(K, V, lo), heavy, w_pos(K, V, lo)))
+    case O.OBin{s, +hk, +hv, +hl, +hh}:
+      rlp.wb(K, V, Nat.is_lt(W(K, V, hl), Nat.mul(2n, W(K, V, hh))), k, v, lo, hk, hv, hl, hh,
+        {==}, wbl, wbh, heavy, alm)
+
+# Rotations toward hi, after lo grew or hi shrank by one.
+def rhs.wb(
+  -K: Data, -V: Data, +k: K, +v: V, +lk: K, +lv: V, +ll: O.OMap<K, V>,
+  +lh: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  +wbl: {WB(K, V, O.OBin{0, lk, lv, ll, lh}) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  +heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, hi)), Nat.add(W(K, V, ll), W(K, V, lh))),
+  +alm: Ord.LE(Nat.add(W(K, V, ll), W(K, V, lh)), Nat.add(3n, Nat.mul(3n, W(K, V, hi)))),
+  +hs: Ord.LE(1n+W(K, V, lh), Nat.mul(2n, W(K, V, ll)))
+) -> {WB(K, V, O.OMap.bin(K, V, lk, lv, ll, O.OMap.bin(K, V, k, v, lh, hi))) == True{} : Bool}:
+  +l = W(K, V, hi)
+  +a = W(K, V, lh)
+  +b = W(K, V, ll)
+  +okl = wb.ok(K, V, lk, lv, ll, lh, wbl)
+  +h1 = Ord.wok_l(b, a, okl)
+  +h2 = Ord.wok_r(b, a, okl)
+  +pl = w_pos(K, V, hi)
+  +pa = w_pos(K, V, lh)
+  +pb = w_pos(K, V, ll)
+  wb.i(K, V, lk, lv, ll, O.OMap.bin(K, V, k, v, lh, hi),
+    Ord.rhs.w0(l, a, b, h1, h2, heavy, alm, hs, pl, pa, pb),
+    wb.l(K, V, lk, lv, ll, lh, wbl),
+    wb.i(K, V, k, v, lh, hi, Ord.rhs.w1(l, a, b, h1, h2, heavy, alm, hs, pl, pa, pb),
+      wb.h(K, V, lk, lv, ll, lh, wbl), wbh))
+
+def rhd.wb(
+  -K: Data, -V: Data, lh: O.OMap<K, V>, +k: K, +v: V, +lk: K, +lv: V,
+  +ll: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  +wbl: {WB(K, V, O.OBin{0, lk, lv, ll, lh}) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  +heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, hi)), Nat.add(W(K, V, ll), W(K, V, lh))),
+  +alm: Ord.LE(Nat.add(W(K, V, ll), W(K, V, lh)), Nat.add(3n, Nat.mul(3n, W(K, V, hi)))),
+  +hd: Ord.LE(Nat.mul(2n, W(K, V, ll)), W(K, V, lh))
+) -> {WB(K, V, O.OMap.rot_hi.double(K, V, k, v, lk, lv, ll, lh, hi)) == True{} : Bool}:
+  match lh:
+    case O.OTip{}:
+      exfalso({WB(K, V, O.OMap.rot_hi.double(K, V, k, v, lk, lv, ll, O.OTip{}, hi)) == True{} : Bool},
+        Ord.dtip(W(K, V, ll), hd, w_pos(K, V, ll)))
+    case O.OBin{s, +mk, +mv, +ml, +mh}:
+      +lh = {O.OBin{0, mk, mv, ml, mh} : O.OMap<K, V>}
+      +l = W(K, V, hi)
+      +x = W(K, V, mh)
+      +y = W(K, V, ml)
+      +b = W(K, V, ll)
+      +okl = wb.ok(K, V, lk, lv, ll, lh, wbl)
+      +h1 = Ord.wok_l(b, Nat.add(y, x), okl)
+      +h2 = Ord.wok_r(b, Nat.add(y, x), okl)
+      +wbm = wb.h(K, V, lk, lv, ll, lh, wbl)
+      +okm = wb.ok(K, V, mk, mv, ml, mh, wbm)
+      +h5 = Ord.wok_l(y, x, okm)
+      +h6 = Ord.wok_r(y, x, okm)
+      +pl = w_pos(K, V, hi)
+      +px = w_pos(K, V, mh)
+      +py = w_pos(K, V, ml)
+      +pb = w_pos(K, V, ll)
+      wb.i(K, V, mk, mv, O.OMap.bin(K, V, lk, lv, ll, ml), O.OMap.bin(K, V, k, v, mh, hi),
+        Ord.rhd.w0(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+        wb.i(K, V, lk, lv, ll, ml, Ord.rhd.w1(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+          wb.l(K, V, lk, lv, ll, lh, wbl), wb.l(K, V, mk, mv, ml, mh, wbm)),
+        wb.i(K, V, k, v, mh, hi, Ord.rhd.w2(l, x, y, b, h1, h2, heavy, alm, hd, h5, h6, pl, px, py, pb),
+          wb.h(K, V, mk, mv, ml, mh, wbm), wbh))
+
+def rhp.wb(
+  -K: Data, -V: Data, single: Bool, +k: K, +v: V, +lk: K, +lv: V, +ll: O.OMap<K, V>,
+  +lh: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  es: {Nat.is_lt(W(K, V, lh), Nat.mul(2n, W(K, V, ll))) == single : Bool},
+  wbl: {WB(K, V, O.OBin{0, lk, lv, ll, lh}) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, hi)), Nat.add(W(K, V, ll), W(K, V, lh))),
+  alm: Ord.LE(Nat.add(W(K, V, ll), W(K, V, lh)), Nat.add(3n, Nat.mul(3n, W(K, V, hi))))
+) -> {WB(K, V, O.OMap.rot_hi.pick(K, V, single, k, v, lk, lv, ll, lh, hi)) == True{} : Bool}:
+  match single:
+    case True{}:
+      rhs.wb(K, V, k, v, lk, lv, ll, lh, hi, wbl, wbh, heavy, alm,
+        Ord.lt_le(W(K, V, lh), Nat.mul(2n, W(K, V, ll)), es))
+    case False{}:
+      rhd.wb(K, V, lh, k, v, lk, lv, ll, hi, wbl, wbh, heavy, alm,
+        Ord.nlt_le(W(K, V, lh), Nat.mul(2n, W(K, V, ll)), es))
+
+def rh.wb(
+  -K: Data, -V: Data, lo: O.OMap<K, V>, +k: K, +v: V, +hi: O.OMap<K, V>,
+  +wbl: {WB(K, V, lo) == True{} : Bool}, wbh: {WB(K, V, hi) == True{} : Bool},
+  heavy: Ord.LE(1n+Nat.mul(3n, W(K, V, hi)), W(K, V, lo)),
+  alm: Ord.LE(W(K, V, lo), Nat.add(3n, Nat.mul(3n, W(K, V, hi))))
+) -> {WB(K, V, Laws.g_rot_hi(K, V, k, v, lo, hi)) == True{} : Bool}:
+  match lo:
+    case O.OTip{}:
+      exfalso({WB(K, V, Laws.g_rot_hi(K, V, k, v, O.OTip{}, hi)) == True{} : Bool},
+        Ord.tiph(W(K, V, hi), heavy, w_pos(K, V, hi)))
+    case O.OBin{s, +lk, +lv, +ll, +lh}:
+      rhp.wb(K, V, Nat.is_lt(W(K, V, lh), Nat.mul(2n, W(K, V, ll))), k, v, lk, lv, ll, lh, hi,
+        {==}, wbl, wbh, heavy, alm)
+
+def bif.wb(
+  -K: Data, -V: Data, heavy_hi: Bool, heavy_lo: Bool, +k: K, +v: V,
+  +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  eh: {Laws.g_heavy_hi(K, V, lo, hi) == heavy_hi : Bool},
+  el: {Laws.g_heavy_lo(K, V, lo, hi) == heavy_lo : Bool},
+  wbl: {WB(K, V, lo) == True{} : Bool}, wbh: {WB(K, V, hi) == True{} : Bool},
+  +alm: {Ord.alm(W(K, V, lo), W(K, V, hi)) == True{} : Bool}
+) -> {WB(K, V, Laws.g_balance.if(K, V, heavy_hi, heavy_lo, k, v, lo, hi)) == True{} : Bool}:
+  match heavy_hi heavy_lo:
+    case True{} _:
+      rl.wb(K, V, hi, k, v, lo, wbl, wbh,
+        Ord.gt_le(W(K, V, hi), Nat.mul(3n, W(K, V, lo)), eh), and_l(Nat.is_le(W(K, V, hi), Nat.add(3n, Nat.mul(3n, W(K, V, lo)))),
+          Nat.is_le(W(K, V, lo), Nat.add(3n, Nat.mul(3n, W(K, V, hi)))), alm))
+    case False{} True{}:
+      rh.wb(K, V, lo, k, v, hi, wbl, wbh,
+        Ord.gt_le(W(K, V, lo), Nat.mul(3n, W(K, V, hi)), el), and_r(Nat.is_le(W(K, V, hi), Nat.add(3n, Nat.mul(3n, W(K, V, lo)))),
+          Nat.is_le(W(K, V, lo), Nat.add(3n, Nat.mul(3n, W(K, V, hi)))), alm))
+    case False{} False{}:
+      wb.i(K, V, k, v, lo, hi,
+        and_i(Nat.is_le(W(K, V, hi), Nat.mul(3n, W(K, V, lo))),
+          Nat.is_le(W(K, V, lo), Nat.mul(3n, W(K, V, hi))),
+          Ord.ngt_le(W(K, V, hi), Nat.mul(3n, W(K, V, lo)), eh),
+          Ord.ngt_le(W(K, V, lo), Nat.mul(3n, W(K, V, hi)), el)),
+        wbl, wbh)
+
+def bal.wb(
+  -K: Data, -V: Data, +k: K, +v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  wbl: {WB(K, V, lo) == True{} : Bool}, wbh: {WB(K, V, hi) == True{} : Bool},
+  alm: {Ord.alm(W(K, V, lo), W(K, V, hi)) == True{} : Bool}
+) -> {WB(K, V, Laws.g_balance(K, V, k, v, lo, hi)) == True{} : Bool}:
+  bif.wb(K, V, Laws.g_heavy_hi(K, V, lo, hi), Laws.g_heavy_lo(K, V, lo, hi), k, v, lo, hi,
+    {==}, {==}, wbl, wbh, alm)
+
+# Balancing keeps the weight.
+def rlp.w(
+  -K: Data, -V: Data, single: Bool, -k: K, -v: V, +lo: O.OMap<K, V>, -hk: K, -hv: V,
+  hl: O.OMap<K, V>, +hh: O.OMap<K, V>
+) -> {Nat.add(W(K, V, lo), Nat.add(W(K, V, hl), W(K, V, hh)))
+      == W(K, V, O.OMap.rot_lo.pick(K, V, single, k, v, lo, hk, hv, hl, hh)) : Nat}:
+  match single hl:
+    case True{} +hl:
+      Ord.sy(Nat.add(Nat.add(W(K, V, lo), W(K, V, hl)), W(K, V, hh)),
+        Nat.add(W(K, V, lo), Nat.add(W(K, V, hl), W(K, V, hh))),
+        Ord.add_assoc(W(K, V, lo), W(K, V, hl), W(K, V, hh)))
+    case False{} O.OTip{}:
+      Ord.sy(Nat.add(Nat.add(W(K, V, lo), 1n), W(K, V, hh)), Nat.add(W(K, V, lo), Nat.add(1n, W(K, V, hh))),
+        Ord.add_assoc(W(K, V, lo), 1n, W(K, V, hh)))
+    case False{} O.OBin{s, mk, mv, +ml, +mh}:
+      +l = W(K, V, lo)
+      +x = W(K, V, ml)
+      +y = W(K, V, mh)
+      +b = W(K, V, hh)
+      Ord.tr(Nat.add(l, Nat.add(Nat.add(x, y), b)), Nat.add(l, Nat.add(x, Nat.add(y, b))),
+        Nat.add(Nat.add(l, x), Nat.add(y, b)),
+        Ord.cong_add(l, l, Nat.add(Nat.add(x, y), b), Nat.add(x, Nat.add(y, b)), {==}, Ord.add_assoc(x, y, b)),
+        Ord.sy(Nat.add(Nat.add(l, x), Nat.add(y, b)), Nat.add(l, Nat.add(x, Nat.add(y, b))),
+          Ord.add_assoc(l, x, Nat.add(y, b))))
+
+def rhp.w(
+  -K: Data, -V: Data, single: Bool, -k: K, -v: V, -lk: K, -lv: V, +ll: O.OMap<K, V>,
+  lh: O.OMap<K, V>, +hi: O.OMap<K, V>
+) -> {Nat.add(Nat.add(W(K, V, ll), W(K, V, lh)), W(K, V, hi))
+      == W(K, V, O.OMap.rot_hi.pick(K, V, single, k, v, lk, lv, ll, lh, hi)) : Nat}:
+  match single lh:
+    case True{} +lh:
+      Ord.add_assoc(W(K, V, ll), W(K, V, lh), W(K, V, hi))
+    case False{} O.OTip{}:
+      Ord.add_assoc(W(K, V, ll), 1n, W(K, V, hi))
+    case False{} O.OBin{s, mk, mv, +ml, +mh}:
+      +l = W(K, V, hi)
+      +x = W(K, V, mh)
+      +y = W(K, V, ml)
+      +b = W(K, V, ll)
+      Ord.tr(Nat.add(Nat.add(b, Nat.add(y, x)), l), Nat.add(Nat.add(Nat.add(b, y), x), l),
+        Nat.add(Nat.add(b, y), Nat.add(x, l)),
+        Ord.cong_add(Nat.add(b, Nat.add(y, x)), Nat.add(Nat.add(b, y), x), l, l,
+          Ord.sy(Nat.add(Nat.add(b, y), x), Nat.add(b, Nat.add(y, x)), Ord.add_assoc(b, y, x)), {==}),
+        Ord.add_assoc(Nat.add(b, y), x, l))
+
+def rl.w(-K: Data, -V: Data, hi: O.OMap<K, V>, -k: K, -v: V, +lo: O.OMap<K, V>)
+  -> {Nat.add(W(K, V, lo), W(K, V, hi)) == W(K, V, Laws.g_rot_lo(K, V, k, v, lo, hi)) : Nat}:
+  match hi:
+    case O.OTip{}:
+      {==}
+    case O.OBin{s, hk, hv, +hl, +hh}:
+      rlp.w(K, V, Nat.is_lt(W(K, V, hl), Nat.mul(2n, W(K, V, hh))), k, v, lo, hk, hv, hl, hh)
+
+def rh.w(-K: Data, -V: Data, lo: O.OMap<K, V>, -k: K, -v: V, +hi: O.OMap<K, V>)
+  -> {Nat.add(W(K, V, lo), W(K, V, hi)) == W(K, V, Laws.g_rot_hi(K, V, k, v, lo, hi)) : Nat}:
+  match lo:
+    case O.OTip{}:
+      {==}
+    case O.OBin{s, lk, lv, +ll, +lh}:
+      rhp.w(K, V, Nat.is_lt(W(K, V, lh), Nat.mul(2n, W(K, V, ll))), k, v, lk, lv, ll, lh, hi)
+
+def bif.w(
+  -K: Data, -V: Data, heavy_hi: Bool, heavy_lo: Bool, -k: K, -v: V,
+  +lo: O.OMap<K, V>, +hi: O.OMap<K, V>
+) -> {Nat.add(W(K, V, lo), W(K, V, hi))
+      == W(K, V, Laws.g_balance.if(K, V, heavy_hi, heavy_lo, k, v, lo, hi)) : Nat}:
+  match heavy_hi heavy_lo:
+    case True{} _:
+      rl.w(K, V, hi, k, v, lo)
+    case False{} True{}:
+      rh.w(K, V, lo, k, v, hi)
+    case False{} False{}:
+      {==}
+
+def bal.w(-K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>)
+  -> {Nat.add(W(K, V, lo), W(K, V, hi)) == W(K, V, Laws.g_balance(K, V, k, v, lo, hi)) : Nat}:
+  bif.w(K, V, Laws.g_heavy_hi(K, V, lo, hi), Laws.g_heavy_lo(K, V, lo, hi), k, v, lo, hi)
+
+def bal.lo.near(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +lo2: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  n1: Ord.LE(W(K, V, lo), 1n+W(K, V, lo2)), n2: Ord.LE(W(K, V, lo2), 1n+W(K, V, lo))
+) -> {Ord.near(Nat.add(W(K, V, lo), W(K, V, hi)), W(K, V, Laws.g_balance(K, V, k, v, lo2, hi))) == True{} : Bool}:
+  %bal.w(K, V, k, v, lo2, hi) : {Ord.near(Nat.add(W(K, V, lo), W(K, V, hi)), _) == True{} : Bool}
+  Ord.nearlo.w0(W(K, V, lo), W(K, V, lo2), W(K, V, hi), n1, n2)
+
+def bal.hi.near(
+  -K: Data, -V: Data, -k: K, -v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>, +hi2: O.OMap<K, V>,
+  n1: Ord.LE(W(K, V, hi), 1n+W(K, V, hi2)), n2: Ord.LE(W(K, V, hi2), 1n+W(K, V, hi))
+) -> {Ord.near(Nat.add(W(K, V, lo), W(K, V, hi)), W(K, V, Laws.g_balance(K, V, k, v, lo, hi2))) == True{} : Bool}:
+  %bal.w(K, V, k, v, lo, hi2) : {Ord.near(Nat.add(W(K, V, lo), W(K, V, hi)), _) == True{} : Bool}
+  Ord.nearhi.w0(W(K, V, lo), W(K, V, hi), W(K, V, hi2), n1, n2)
+
+# lo became lo2, one lighter or heavier at most: rebalance the node.
+def bal.lo(
+  -K: Data, -V: Data, +k: K, +v: V, +lo: O.OMap<K, V>, +lo2: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  +ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  +pw: {PW(K, V, W(K, V, lo), lo2) == True{} : Bool}
+) -> {PW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_balance(K, V, k, v, lo2, hi)) == True{} : Bool}:
+  +a = W(K, V, lo)
+  +a2 = W(K, V, lo2)
+  +c = W(K, V, hi)
+  +nr = and_r(WB(K, V, lo2), Ord.near(a, a2), pw)
+  +n1 = and_l(Nat.is_le(a, 1n+a2), Nat.is_le(a2, 1n+a), nr)
+  +n2 = and_r(Nat.is_le(a, 1n+a2), Nat.is_le(a2, 1n+a), nr)
+  and_i(WB(K, V, Laws.g_balance(K, V, k, v, lo2, hi)),
+    Ord.near(Nat.add(a, c), W(K, V, Laws.g_balance(K, V, k, v, lo2, hi))),
+    bal.wb(K, V, k, v, lo2, hi, and_l(WB(K, V, lo2), Ord.near(a, a2), pw), wbh,
+      Ord.almlo.w0(a, c, a2, Ord.wok_l(a, c, ok), Ord.wok_r(a, c, ok), n1, n2)),
+    bal.lo.near(K, V, k, v, lo, lo2, hi, n1, n2))
+
+def bal.hi(
+  -K: Data, -V: Data, +k: K, +v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>, +hi2: O.OMap<K, V>,
+  +ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  +pw: {PW(K, V, W(K, V, hi), hi2) == True{} : Bool}
+) -> {PW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_balance(K, V, k, v, lo, hi2)) == True{} : Bool}:
+  +a = W(K, V, lo)
+  +c = W(K, V, hi)
+  +c2 = W(K, V, hi2)
+  +nr = and_r(WB(K, V, hi2), Ord.near(c, c2), pw)
+  +n1 = and_l(Nat.is_le(c, 1n+c2), Nat.is_le(c2, 1n+c), nr)
+  +n2 = and_r(Nat.is_le(c, 1n+c2), Nat.is_le(c2, 1n+c), nr)
+  and_i(WB(K, V, Laws.g_balance(K, V, k, v, lo, hi2)),
+    Ord.near(Nat.add(a, c), W(K, V, Laws.g_balance(K, V, k, v, lo, hi2))),
+    bal.wb(K, V, k, v, lo, hi2, wbl, and_l(WB(K, V, hi2), Ord.near(c, c2), pw),
+      Ord.almhi.w0(a, c, c2, Ord.wok_l(a, c, ok), Ord.wok_r(a, c, ok), n1, n2)),
+    bal.hi.near(K, V, k, v, lo, hi, hi2, n1, n2))
+
+def put.wb(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, t: O.OMap<K, V>, +k: K, +v: V,
+  +wb: {WB(K, V, t) == True{} : Bool}
+) -> {PW(K, V, W(K, V, t), Laws.g_put(~K, ~V, ~cmp, t, k, v)) == True{} : Bool}:
+  match t:
+    case O.OTip{}:
+      {==}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      +ok = wb.ok(K, V, key, val, lo, hi, wb)
+      +wbl = wb.l(K, V, key, val, lo, hi, wb)
+      +wbh = wb.h(K, V, key, val, lo, hi, wb)
+      +n = Nat.add(W(K, V, lo), W(K, V, hi))
+      cmp.split(O.OMap<K, V>, Bool, x => PW(K, V, n, x), True{}, cmp(k, key),
+        u => Laws.g_balance(K, V, key, val, Laws.g_put(~K, ~V, ~cmp, lo, k, v), hi),
+        u => O.OBin{s, key, v, lo, hi},
+        u => Laws.g_balance(K, V, key, val, lo, Laws.g_put(~K, ~V, ~cmp, hi, k, v)),
+        e => bal.lo(K, V, key, val, lo, Laws.g_put(~K, ~V, ~cmp, lo, k, v), hi, ok, wbh,
+          put.wb(~K, ~V, ~cmp, lo, k, v, wbl)),
+        e => and_i(WB(K, V, O.OBin{s, key, v, lo, hi}), Ord.near(n, n), wb, Ord.nearrf.w0(n)),
+        e => bal.hi(K, V, key, val, lo, hi, Laws.g_put(~K, ~V, ~cmp, hi, k, v), ok, wbl,
+          put.wb(~K, ~V, ~cmp, hi, k, v, wbh)))
+
+def Laws.omap_put_weight_balanced(K, V, cmp, m, wb, k, v):
+  and_l(WB(K, V, Laws.g_put(~K, ~V, ~cmp, m, k, v)),
+    Ord.near(W(K, V, m), W(K, V, Laws.g_put(~K, ~V, ~cmp, m, k, v))),
+    put.wb(~K, ~V, ~cmp, m, k, v, wb))
+
+def pm.fin.wb.go(
+  -K: Data, -V: Data, +mk: K, +mv: V, +t: O.OMap<K, V>, +k: K, +v: V,
+  +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  ih: {PMW(K, V, W(K, V, lo), {(mk, mv, t) : K & V & O.OMap<K, V>}) == True{} : Bool}
+) -> {PMW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)),
+       Laws.g_pop_min.fin(K, V, k, v, hi, {(mk, mv, t) : K & V & O.OMap<K, V>})) == True{} : Bool}:
+  bal.lo(K, V, k, v, lo, t, hi, ok, wbh, ih)
+
+# Workaround for https://github.com/bendlang/bend/issues/1077: bind the tuple without +.
+def pm.fin.wb(
+  -K: Data, -V: Data, r: K & V & O.OMap<K, V>, +k: K, +v: V,
+  +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbh: {WB(K, V, hi) == True{} : Bool},
+  ih: {PMW(K, V, W(K, V, lo), r) == True{} : Bool}
+) -> {PMW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_pop_min.fin(K, V, k, v, hi, r)) == True{} : Bool}:
+  (mk, rest) = r
+  (mv, t) = rest
+  pm.fin.wb.go(K, V, mk, mv, t, k, v, lo, hi, ok, wbh, ih)
+
+def pm.wb(
+  -K: Data, -V: Data, lo: O.OMap<K, V>, +k: K, +v: V, +hi: O.OMap<K, V>,
+  +e: {WB(K, V, O.OBin{0, k, v, lo, hi}) == True{} : Bool}
+) -> {PMW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_pop_min(K, V, lo, k, v, hi)) == True{} : Bool}:
+  match lo:
+    case O.OTip{}:
+      and_i(WB(K, V, hi), Ord.near(1n+W(K, V, hi), W(K, V, hi)),
+        wb.h(K, V, k, v, O.OTip{}, hi, e), Ord.nearpm.w0(W(K, V, hi)))
+    case O.OBin{s, +lk, +lv, +ll, +lh}:
+      +lo = {O.OBin{0, lk, lv, ll, lh} : O.OMap<K, V>}
+      pm.fin.wb(K, V, Laws.g_pop_min(K, V, ll, lk, lv, lh), k, v, lo, hi,
+        wb.ok(K, V, k, v, lo, hi, e), wb.h(K, V, k, v, lo, hi, e),
+        pm.wb(K, V, ll, lk, lv, lh, wb.l(K, V, k, v, lo, hi, e)))
+
+def glue.fin.wb.go(
+  -K: Data, -V: Data, +mk: K, +mv: V, +t: O.OMap<K, V>, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  pmr: {PMW(K, V, W(K, V, hi), {(mk, mv, t) : K & V & O.OMap<K, V>}) == True{} : Bool}
+) -> {PW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)),
+       Laws.g_glue.fin(K, V, lo, {(mk, mv, t) : K & V & O.OMap<K, V>})) == True{} : Bool}:
+  bal.hi(K, V, mk, mv, lo, hi, t, ok, wbl, pmr)
+
+# Workaround for https://github.com/bendlang/bend/issues/1077: bind the tuple without +.
+def glue.fin.wb(
+  -K: Data, -V: Data, r: K & V & O.OMap<K, V>, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>,
+  ok: {Laws.weight_ok(W(K, V, lo), W(K, V, hi)) == True{} : Bool},
+  wbl: {WB(K, V, lo) == True{} : Bool},
+  pmr: {PMW(K, V, W(K, V, hi), r) == True{} : Bool}
+) -> {PW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_glue.fin(K, V, lo, r)) == True{} : Bool}:
+  (mk, rest) = r
+  (mv, t) = rest
+  glue.fin.wb.go(K, V, mk, mv, t, lo, hi, ok, wbl, pmr)
+
+def glue.wb(
+  -K: Data, -V: Data, hi: O.OMap<K, V>, +lo: O.OMap<K, V>, -key: K, -val: V,
+  +e: {WB(K, V, O.OBin{0, key, val, lo, hi}) == True{} : Bool}
+) -> {PW(K, V, Nat.add(W(K, V, lo), W(K, V, hi)), Laws.g_glue(K, V, lo, hi)) == True{} : Bool}:
+  match hi:
+    case O.OTip{}:
+      and_i(WB(K, V, lo), Ord.near(Nat.add(W(K, V, lo), 1n), W(K, V, lo)),
+        wb.l(K, V, key, val, lo, O.OTip{}, e), Ord.neargt.w0(W(K, V, lo)))
+    case O.OBin{s, +k, +v, +hl, +hh}:
+      +hi = {O.OBin{0, k, v, hl, hh} : O.OMap<K, V>}
+      glue.fin.wb(K, V, Laws.g_pop_min(K, V, hl, k, v, hh), lo, hi,
+        wb.ok(K, V, key, val, lo, hi, e), wb.l(K, V, key, val, lo, hi, e),
+        pm.wb(K, V, hl, k, v, hh, wb.h(K, V, key, val, lo, hi, e)))
+
+def del.wb(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, t: O.OMap<K, V>, +k: K,
+  +wb: {WB(K, V, t) == True{} : Bool}
+) -> {PW(K, V, W(K, V, t), Laws.g_del(~K, ~V, ~cmp, t, k)) == True{} : Bool}:
+  match t:
+    case O.OTip{}:
+      {==}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      +ok = wb.ok(K, V, key, val, lo, hi, wb)
+      +wbl = wb.l(K, V, key, val, lo, hi, wb)
+      +wbh = wb.h(K, V, key, val, lo, hi, wb)
+      +n = Nat.add(W(K, V, lo), W(K, V, hi))
+      cmp.split(O.OMap<K, V>, Bool, x => PW(K, V, n, x), True{}, cmp(k, key),
+        u => Laws.g_balance(K, V, key, val, Laws.g_del(~K, ~V, ~cmp, lo, k), hi),
+        u => Laws.g_glue(K, V, lo, hi),
+        u => Laws.g_balance(K, V, key, val, lo, Laws.g_del(~K, ~V, ~cmp, hi, k)),
+        e => bal.lo(K, V, key, val, lo, Laws.g_del(~K, ~V, ~cmp, lo, k), hi, ok, wbh,
+          del.wb(~K, ~V, ~cmp, lo, k, wbl)),
+        e => glue.wb(K, V, hi, lo, key, val, wb),
+        e => bal.hi(K, V, key, val, lo, hi, Laws.g_del(~K, ~V, ~cmp, hi, k), ok, wbl,
+          del.wb(~K, ~V, ~cmp, hi, k, wbh)))
+
+def Laws.omap_del_weight_balanced(K, V, cmp, m, wb, k):
+  and_l(WB(K, V, Laws.g_del(~K, ~V, ~cmp, m, k)),
+    Ord.near(W(K, V, m), W(K, V, Laws.g_del(~K, ~V, ~cmp, m, k))),
+    del.wb(~K, ~V, ~cmp, m, k, wb))
+
+def Laws.omap_g_put_matches():
+  {==}
+
+def Laws.omap_g_del_matches():
+  {==}

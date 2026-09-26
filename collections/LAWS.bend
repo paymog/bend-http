@@ -219,6 +219,154 @@ law omap_get_put_other_key:
   {O.OMap.get(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k2, v), k)
    == O.OMap.get(~K, ~V, ~cmp, m, k) : Maybe<&2, V>}
 
+
+# Ghost weight from tree shape: weight = stored size + 1, so OTip has weight 1 and
+# OBin{lo, hi} has weight w(lo) + w(hi). Balance is Hirai-Yamamoto (delta 3, gamma 2).
+def omap_weight(-K: Data, -V: Data, m: O.OMap<K, V>) -> Nat:
+  match m:
+    case O.OTip{}:
+      1n
+    case O.OBin{s, k, v, lo, hi}:
+      Nat.add(omap_weight(K, V, lo), omap_weight(K, V, hi))
+
+def weight_ok(+wl: Nat, +wh: Nat) -> Bool:
+  Nat.is_le(wh, Nat.mul(3n, wl)) && Nat.is_le(wl, Nat.mul(3n, wh))
+
+def weight_balanced(-K: Data, -V: Data, m: O.OMap<K, V>) -> Bool:
+  match m:
+    case O.OTip{}:
+      True{}
+    case O.OBin{s, k, v, +lo, +hi}:
+      weight_ok(omap_weight(K, V, lo), omap_weight(K, V, hi))
+        && weight_balanced(K, V, lo) && weight_balanced(K, V, hi)
+
+# The ghost map below has the shape of OMap: it builds nodes with the same
+# OMap.bin and rotations, but it compares Nat weights where OMap compares U32
+# sizes. While 3 * (size + 1) stays below 2^32, the U32 tests give the same
+# answers, so g_put and g_del give the same tree as put and del. The checker
+# cannot see into U32, so that link is an assumption, checked on fixtures below.
+def g_heavy_hi(-K: Data, -V: Data, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> Bool:
+  Nat.is_gt(omap_weight(K, V, hi), Nat.mul(3n, omap_weight(K, V, lo)))
+
+def g_heavy_lo(-K: Data, -V: Data, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> Bool:
+  Nat.is_gt(omap_weight(K, V, lo), Nat.mul(3n, omap_weight(K, V, hi)))
+
+def g_rot_lo(-K: Data, -V: Data, k: K, v: V, lo: O.OMap<K, V>, hi: O.OMap<K, V>) -> O.OMap<K, V>:
+  match hi:
+    case O.OTip{}:
+      O.OMap.bin(K, V, k, v, lo, O.OTip{})
+    case O.OBin{s, hk, hv, +hl, +hh}:
+      O.OMap.rot_lo.pick(K, V,
+        Nat.is_lt(omap_weight(K, V, hl), Nat.mul(2n, omap_weight(K, V, hh))),
+        k, v, lo, hk, hv, hl, hh)
+
+def g_rot_hi(-K: Data, -V: Data, k: K, v: V, lo: O.OMap<K, V>, hi: O.OMap<K, V>) -> O.OMap<K, V>:
+  match lo:
+    case O.OTip{}:
+      O.OMap.bin(K, V, k, v, O.OTip{}, hi)
+    case O.OBin{s, lk, lv, +ll, +lh}:
+      O.OMap.rot_hi.pick(K, V,
+        Nat.is_lt(omap_weight(K, V, lh), Nat.mul(2n, omap_weight(K, V, ll))),
+        k, v, lk, lv, ll, lh, hi)
+
+def g_balance.if(
+  -K: Data, -V: Data, heavy_hi: Bool, heavy_lo: Bool, k: K, v: V,
+  lo: O.OMap<K, V>, hi: O.OMap<K, V>
+) -> O.OMap<K, V>:
+  match heavy_hi heavy_lo:
+    case True{} _:
+      g_rot_lo(K, V, k, v, lo, hi)
+    case False{} True{}:
+      g_rot_hi(K, V, k, v, lo, hi)
+    case False{} False{}:
+      O.OMap.bin(K, V, k, v, lo, hi)
+
+def g_balance(-K: Data, -V: Data, k: K, v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> O.OMap<K, V>:
+  g_balance.if(K, V, g_heavy_hi(K, V, lo, hi), g_heavy_lo(K, V, lo, hi), k, v, lo, hi)
+
+def g_put(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>, +k: K, +v: V
+) -> O.OMap<K, V>:
+  match m:
+    case O.OTip{}:
+      O.OBin{1, k, v, O.OTip{}, O.OTip{}}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      O.Cmp.case(O.OMap<K, V>, cmp(k, key),
+        u => g_balance(K, V, key, val, g_put(~K, ~V, ~cmp, lo, k, v), hi),
+        u => O.OBin{s, key, v, lo, hi},
+        u => g_balance(K, V, key, val, lo, g_put(~K, ~V, ~cmp, hi, k, v)))
+
+def g_pop_min.fin(
+  -K: Data, -V: Data, k: K, v: V, hi: O.OMap<K, V>, r: K & V & O.OMap<K, V>
+) -> K & V & O.OMap<K, V>:
+  (mk, mv, lo) = r
+  (mk, mv, g_balance(K, V, k, v, lo, hi))
+
+def g_pop_min(
+  -K: Data, -V: Data, lo: O.OMap<K, V>, k: K, v: V, hi: O.OMap<K, V>
+) -> K & V & O.OMap<K, V>:
+  match lo:
+    case O.OTip{}:
+      (k, v, hi)
+    case O.OBin{s, lk, lv, ll, lh}:
+      g_pop_min.fin(K, V, k, v, hi, g_pop_min(K, V, ll, lk, lv, lh))
+
+def g_glue.fin(-K: Data, -V: Data, lo: O.OMap<K, V>, r: K & V & O.OMap<K, V>) -> O.OMap<K, V>:
+  (k, v, hi) = r
+  g_balance(K, V, k, v, lo, hi)
+
+def g_glue(-K: Data, -V: Data, lo: O.OMap<K, V>, hi: O.OMap<K, V>) -> O.OMap<K, V>:
+  match hi:
+    case O.OTip{}:
+      lo
+    case O.OBin{s, k, v, hl, hh}:
+      g_glue.fin(K, V, lo, g_pop_min(K, V, hl, k, v, hh))
+
+def g_del(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>, +k: K
+) -> O.OMap<K, V>:
+  match m:
+    case O.OTip{}:
+      O.OTip{}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      O.Cmp.case(O.OMap<K, V>, cmp(k, key),
+        u => g_balance(K, V, key, val, g_del(~K, ~V, ~cmp, lo, k), hi),
+        u => g_glue(K, V, lo, hi),
+        u => g_balance(K, V, key, val, lo, g_del(~K, ~V, ~cmp, hi, k)))
+
+law omap_new_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  {weight_balanced(K, V, O.OMap.new(K, V)) == True{} : Bool}
+
+law omap_g_put_matches:
+  {g_put(~U32, ~U32, ~U32.cmp, m7(), 8, 80)
+   == O.OMap.put(~U32, ~U32, ~U32.cmp, m7(), 8, 80) : O.OMap<U32, U32>}
+
+law omap_g_del_matches:
+  {g_del(~U32, ~U32, ~U32.cmp, m7(), 4)
+   == O.OMap.del(~U32, ~U32, ~U32.cmp, m7(), 4) : O.OMap<U32, U32>}
+
+law omap_put_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for +m: O.OMap<K, V>
+  for wb: {weight_balanced(K, V, m) == True{} : Bool}
+  for +k: K
+  for +v: V
+  {weight_balanced(K, V, g_put(~K, ~V, ~cmp, m, k, v)) == True{} : Bool}
+
+law omap_del_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for +m: O.OMap<K, V>
+  for wb: {weight_balanced(K, V, m) == True{} : Bool}
+  for +k: K
+  {weight_balanced(K, V, g_del(~K, ~V, ~cmp, m, k)) == True{} : Bool}
+
+
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
    == [1, 2, 3, 4, 5] : List<&2, U32>}
