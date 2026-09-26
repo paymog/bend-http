@@ -8,9 +8,9 @@
 
 static Term wire_bytes(Env e, const char* p, u64 n) {
   Term s    = term_pak(CID(SNil), 0);
-  Loc  hole = 0;
+  u64  hole = 0;
   for (u64 i = 0; i < n; i += 1) {
-    Loc  l = heap_alloc(e, 1);
+    u64  l = heap_alloc(e, 1);
     Term t = term_ctr(CID(SCon), l);
     e.mem[l] = (uint8_t)p[i];
     if (hole == 0) {
@@ -52,13 +52,13 @@ static char* wire_octets(Env e, Term s, u64* len, bool* bad) {
 // block (blk_new, blk_loc, blk_read, blk_write); recheck on a Bend upgrade.
 static Term wire_words(Env e, const char* p, u64 n) {
   u64  w    = (n + 3) / 4;
-  Nat  d    = 0;
+  u64  d    = 0;
   Term zero = 0;
   while ((1ull << d) < w) {
     d += 1;
   }
   Term a = blk_new(e, false, d, 0, 1, &zero);
-  Loc  l = blk_loc(e.mem, a);
+  u64  l = blk_loc(e.mem, a);
   for (u64 k = 0; k < w; k += 1) {
     u32 x = 0;
     for (u64 j = 0; j < 4 && 4 * k + j < n; j += 1) {
@@ -71,11 +71,11 @@ static Term wire_words(Env e, const char* p, u64 n) {
 
 // The first n bytes of a U32 BUF; n past its end fails with EINVAL.
 static char* wire_words_octets(Env e, Term a, u64 n, u64* len, bool* bad) {
-  Corpus H = e.mem;
+  u64* H = e.mem;
   *bad     = term_tag(a) != TAG_BUF || n > (4ull << blk_cls(a));
   *len     = *bad ? 0 : n;
   char* buf = io_mem(malloc(*len + 1));
-  Loc   l   = *bad ? 0 : blk_loc(H, a);
+  u64   l   = *bad ? 0 : blk_loc(H, a);
   for (u64 i = 0; i < *len; i += 1) {
     buf[i] = (char)(blk_read(H, false, l, (u32)(i / 4)) >> (8 * (i % 4)));
   }
