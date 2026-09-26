@@ -45,9 +45,9 @@ Versions: Bend 2.0.28, Apple clang 17.0.0, Python 3.14.6, Bun 1.3.14, Node v24.0
 
 | op | C | Python | Bun | Node | Bend |
 |---|---:|---:|---:|---:|---:|
-| is_match | 0.0 | 0.3 | 0.3 | 0.2 | 161.0 |
-| find_captures | 17.7 | 3.0 | 0.9 | 1.5 | 819.0 |
-| redos | 3.5 | timeout | 980.1 | timeout | 146.0 |
+| is_match | 0.0 | 0.3 | 0.3 | 0.2 | 145.0 |
+| find_captures | 15.9 | 3.0 | 0.8 | 0.7 | 777.0 |
+| redos | 3.3 | timeout | 915.6 | timeout | 141.0 |
 
 Checksums (1 MiB text): `is_match` 33553812, `find_captures` 3021334545, `redos` 0. All non-timeout variants agree.
 
