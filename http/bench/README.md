@@ -32,12 +32,12 @@ M4 Pro, macOS 26.6.2, 2026-09-26. Median of five runs. Times are in ms for 20,00
 
 | op | C | Rust | Bun | Node | Python | Bend |
 |---|---:|---:|---:|---:|---:|---:|
-| parse_req | 3.5 (1.9x) | 1.8 (1.0x) | 16.3 (9.1x) | 20.0 (11.1x) | 440.4 (244.7x) | 865.0 (480.6x) |
-| parse_res | 2.2 (1.4x) | 1.6 (1.0x) | 12.0 (7.5x) | 15.2 (9.5x) | 311.2 (194.5x) | 661.0 (413.1x) |
-| encode_req | n/a | n/a | n/a | n/a | 311.8 (1.7x) | 180.0 (1.0x) |
-| encode_res | n/a | n/a | n/a | n/a | 267.4 (2.1x) | 126.0 (1.0x) |
+| parse_req | 3.7 (2.3x) | 1.6 (1.0x) | 17.3 (10.8x) | 20.4 (12.7x) | 442.6 (276.6x) | 842.0 (526.2x) |
+| parse_res | 2.3 (1.6x) | 1.4 (1.0x) | 13.0 (9.3x) | 15.5 (11.1x) | 314.0 (224.3x) | 642.0 (458.6x) |
+| encode_req | n/a | n/a | n/a | n/a | 316.6 (1.7x) | 182.0 (1.0x) |
+| encode_res | n/a | n/a | n/a | n/a | 268.7 (2.1x) | 129.0 (1.0x) |
 
-Versions: Bend 2.0.28, Apple clang 17.0.0 with llhttp 9.4.2, rustc 1.91.0 with httparse 1.10.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6 with h11 0.16.0.
+Versions: Bend 2.0.29, Apple clang 17.0.0 with llhttp 9.4.2, rustc 1.91.0 with httparse 1.10.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6 with h11 0.16.0.
 
 ### The calls
 
