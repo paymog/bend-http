@@ -131,7 +131,7 @@ def sanitize(s: String) -> String:
 def drop_cr.if(+s: String, cr: Bool) -> String:
   match cr:
     case True{}:
-      String.reverse(String.drop(String.reverse(s), 1n))
+      String.take(s, (String.length(s) - 1n : Nat))
     case False{}:
       s
 
@@ -184,8 +184,21 @@ def split_at_blank.go(s: String, e: Bool, w: U32, acc: String) -> String & Strin
           +w2 = (w * 256 + a : U32)
           split_at_blank.go(t, U32.is_eq(w2, 218762506), w2, SCon{Chr{a}, acc})
 
-def split_at_blank(s: String) -> String & String:
-  split_at_blank.go(s, False{}, 0, SNil{})
+def split_at_blank.scan.go(+raw: String, s: String, off: Nat, w: U32, e: Bool) -> String & String:
+  match s:
+    case SNil{}:
+      (String.take(raw, off), SNil{})
+    case SCon{Chr{+a}, t}:
+      match e:
+        case True{}:
+          (String.take(raw, off), SCon{Chr{a}, t})
+        case False{}:
+          +w2 = (w * 256 + a : U32)
+          +off1 = (1n + off : Nat)
+          split_at_blank.scan.go(raw, t, off1, w2, U32.is_eq(w2, 218762506))
+
+def split_at_blank(+s: String) -> String & String:
+  split_at_blank.scan.go(s, s, 0n, 0, False{})
 
 def split_colon.go(s: String, acc: String, hit: Bool) -> String & String:
   match s:
@@ -200,9 +213,9 @@ def split_colon.go(s: String, acc: String, hit: Bool) -> String & String:
         case True{}:
           take.cut(acc, SCon{Chr{c}, t})
         case False{}:
-          split_colon.go(t, SCon{Chr{c}, acc}, U32.is_eq(c, 58))
+          split_colon.go(t, SCon{Char.to_lower(Chr{c}), acc}, U32.is_eq(c, 58))
 
-def split_colon(s: String) -> String & String:
+def split_colon(+s: String) -> String & String:
   split_colon.go(s, SNil{}, False{})
 
 def has_header.of(r: Map<&2, List<&2, String>> & Bool) -> Bool:
@@ -230,7 +243,7 @@ def fields_put.key(+m: Map<&2, List<&2, String>>, +k: String, v: String) -> Fiel
 
 def fields_put.kv(m: Map<&2, List<&2, String>>, kv: String & String) -> Fields:
   (k, v) = kv
-  fields_put.key(m, String.to_lower(k), String.trim(v))
+  fields_put.key(m, k, String.trim(v))
 
 def fields_put.fold(m: Map<&2, List<&2, String>>, line: String, fold: Bool) -> Fields:
   match fold:
@@ -753,6 +766,7 @@ def parse.lines(xs: List<&2, String>, rest: String) -> Got:
     case Con{line, headers}:
       parse.start3(start_line(line), headers, rest)
 
+
 def parse.head(+head: String, rest: String, whole: Bool) -> Got:
   match whole:
     case False{}:
@@ -767,6 +781,7 @@ def parse.of(hb: String & String) -> Got:
 # serve reads until this is not GotMore.
 def parse.got(raw: String) -> Got:
   parse.of(split_at_blank(raw))
+
 
 def parse.req(g: Got) -> Maybe<&1, Req>:
   match g:
@@ -1472,7 +1487,7 @@ def body.of(hb: String & String) -> String:
   b
 
 def body(s: String) -> String:
-  body.of(split_at_blank(s))
+  body.of(split_at_blank.go(s, False{}, 0, SNil{}))
 
 def headers_lines(+k: String, vs: List<&2, String>, acc: String) -> String:
   match vs:

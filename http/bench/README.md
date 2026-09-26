@@ -32,12 +32,12 @@ M4 Pro, macOS 26.6.2, 2026-09-26. Median of five runs. Times are in ms for 20,00
 
 | op | C | Rust | Bun | Node | Python | Bend |
 |---|---:|---:|---:|---:|---:|---:|
-| parse_req | 3.5 (1.9x) | 1.8 (1.0x) | 16.3 (9.1x) | 20.0 (11.1x) | 440.4 (244.7x) | 865.0 (480.6x) |
-| parse_res | 2.2 (1.4x) | 1.6 (1.0x) | 12.0 (7.5x) | 15.2 (9.5x) | 311.2 (194.5x) | 661.0 (413.1x) |
-| encode_req | n/a | n/a | n/a | n/a | 311.8 (1.7x) | 180.0 (1.0x) |
-| encode_res | n/a | n/a | n/a | n/a | 267.4 (2.1x) | 126.0 (1.0x) |
+| parse_req | 3.7 (2.3x) | 1.6 (1.0x) | 17.3 (10.8x) | 20.4 (12.7x) | 442.6 (276.6x) | 820.0 (482.4x) |
+| parse_res | 2.3 (1.6x) | 1.4 (1.0x) | 13.0 (9.3x) | 15.5 (11.1x) | 314.0 (224.3x) | 617.0 (440.7x) |
+| encode_req | n/a | n/a | n/a | n/a | 316.6 (1.7x) | 182.0 (1.0x) |
+| encode_res | n/a | n/a | n/a | n/a | 268.7 (2.1x) | 129.0 (1.0x) |
 
-Versions: Bend 2.0.28, Apple clang 17.0.0 with llhttp 9.4.2, rustc 1.91.0 with httparse 1.10.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6 with h11 0.16.0.
+Versions: Bend 2.0.29, Apple clang 17.0.0 with llhttp 9.4.2, rustc 1.91.0 with httparse 1.10.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6 with h11 0.16.0.
 
 ### The calls
 
@@ -59,6 +59,29 @@ C, Rust, and JavaScript have no HTTP/1.1 message encoder short of a client or se
 - Bend strings are lists, one cell per byte. The others read flat buffers.
 - Bend's `IO.now` counts in whole ms. The others use sub-ms clocks.
 - These are micro-benchmarks on one machine.
+
+
+### Parse phase breakdown (Bend native)
+
+`parse_phases.bend` times `Http.parse` stages in isolation on the same 20,000×451-byte request as the codec bench (one native run, ms for the whole loop):
+
+```sh
+cd http/bench && bend parse_phases.bend -o out/parse_phases && ./out/parse_phases
+```
+
+| phase | ms (2026-09-26) | what it measures |
+|---|---:|---|
+| full | 869 | `Http.parse` |
+| split | 70 | `split_at_blank` |
+| whole | 174 | `ends_with` head terminator |
+| lines | 187 | `String.lines` |
+| start_line | 197 | first line → method/path/version |
+| field_ops | 447 | per header line: `drop_cr`, `split_colon` (lower inline), `trim` |
+| map_build | 649 | `parse.headers` → `Map` |
+| head_got | 864 | `parse.got` through head (no body rules) |
+| body_len | 683 | body length / hold after headers |
+
+`field_ops` + `map_build` dominate; `String.lines` and linked-list `Map` inserts are the main Bend-side costs (char-list strings). A one-pass head scanner (no line list) is the next step but needs careful factoring under Bend’s define-before-use and no match-on-compute rules.
 
 ## Network
 
