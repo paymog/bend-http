@@ -41,6 +41,72 @@ def hash.str(s: String, +h: U32) -> U32:
     case SCon{Chr{+c}, t}:
       hash.str(t, mix(h, b8(c)))
 
+
+def recv.fuel() -> Nat:
+  65536n
+
+def recv.scratch() -> Array<U32>:
+  Array.new(U32, 18n, 0)
+
+@unsafe
+def recv.patch.pair(r: Array<U32> & Array<U32>) -> Array<U32>:
+  (_, dst) = r
+  dst
+
+@unsafe
+def recv.patch(+ln: U32, words: Array<U32>, arr: Array<U32>, +off: U32) -> Array<U32>:
+  recv.patch.pair(Bytes.copy(ln, words, arr, 0, off))
+
+def recv.full.pack(sock: Socket, arr: Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  IO.pure(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>, (sock, Done{(len(), arr)}))
+
+@unsafe
+def recv.full.step(fuel: Nat, sock: Socket, +off: U32, +ln: U32, arr: Array<U32>, words: Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  recv.full.check(fuel, sock, (off + ln : U32), recv.patch(ln, words, arr, off))
+
+@unsafe
+def recv.full.got(fuel: Nat, sock: Socket, +off: U32, arr: Array<U32>, pair: U32 & Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  (ln, words) = pair
+  recv.full.step(fuel, sock, off, ln, arr, words)
+
+@unsafe
+def recv.full.more(fuel: Nat, +off: U32, arr: Array<U32>, mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  (sock, r) = mr
+  match r:
+    case Fail{e}:
+      IO.pure(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>, (sock, Fail{e}))
+    case Done{pair}:
+      recv.full.got(fuel, sock, off, arr, pair)
+
+@unsafe
+def recv.full.read(fuel: Nat, sock: Socket, +off: U32, arr: Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  match fuel:
+    case 0n:
+      do IO<Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>>:
+        IO.print("recv incomplete")
+        IO.pure(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>, (sock, Fail{(110, "incomplete")}))
+    case 1n+p:
+      do IO<Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>>:
+        need : U32 = (len() - off : U32)
+        mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, need, recv.ms())
+        recv.full.more(p, off, arr, mr)
+
+@unsafe
+def recv.full.ready(ok: Bool, fuel: Nat, sock: Socket, +off: U32, arr: Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  match ok:
+    case True{}:
+      recv.full.pack(sock, arr)
+    case False{}:
+      recv.full.read(fuel, sock, off, arr)
+
+@unsafe
+def recv.full.check(fuel: Nat, sock: Socket, +off: U32, arr: Array<U32>) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  recv.full.ready(U32.is_ge(off, len()), fuel, sock, off, arr)
+
+@unsafe
+def recv.full(sock: Socket) -> IO(Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>):
+  recv.full.check(recv.fuel(), sock, 0, recv.scratch())
+
 def lap(+name: String, t0: Nat, t1: Nat, +cs: U32) -> IO(Unit):
   IO.print(name ++ "\t" ++ Nat.show((t1 - t0 : Nat)) ++ "\t" ++ U32.show(cs))
 
@@ -72,7 +138,7 @@ def echo.done(mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> IO
 
 def echo.one(sock: Socket) -> IO(Socket):
   do IO<Socket>:
-    mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), recv.ms())
+    mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- recv.full(sock)
     echo.done(mr)
 
 def echo.loop(n: Nat, sock: Socket) -> IO(Unit):
@@ -131,7 +197,7 @@ def client.round.sent(t0: Nat, n: Nat, mr: Socket & Result<&1, &1, U32 & String,
       IO.print("send failed")
     case Done{u}:
       do IO<Unit>:
-        mr2 : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), recv.ms())
+        mr2 : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- recv.full(sock)
         client.round.recv(t0, n, mr2, h, send)
 
 @unsafe

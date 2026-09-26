@@ -20,7 +20,7 @@ You need `bend`, `clang`, `rustc`, `bun`, `node`, and `python3`. Binaries go to 
 
 Bend runs in **one process**: `IO.fork` starts a TCP echo server (`TCP.listen` / `TCP.accept`, then `Wire.recv.words` / `Wire.send.words`); the main task sleeps 500 ms, connects with `Wire.connect`, builds the send buffer in IO (`buf()` after connect), then times the client echo loop. Other languages use a helper thread or async server that signals when listen is ready.
 
-Wire `recv.words` reads until the full buffer arrives or the deadline hits (same pattern as the C/Python benches).
+Wire `recv.words` is one POSIX read (up to `max` bytes). **Bend** loops it in `bench.bend` with a **Nat fuel** counter, copying each chunk into a scratch buffer until the round’s 1 MiB is complete—the same obvious socket loop the C/Python/JS benches use.
 
 ## Results
 
@@ -28,12 +28,12 @@ M4 Pro, macOS, 2026-09-26. Median of five runs (`python3 run.py 5`). Times are i
 
 | variant | echo ms | echo MB/s | vs fastest |
 |---:|---:|---:|---:|
-| C | 57.8 | 2,323 | 1.0x ms, 1.00x MB/s |
-| Rust | 59.2 | 2,266 | 1.0x ms, 0.98x MB/s |
-| Bun | 471.3 | 285 | 8.2x ms, 0.12x MB/s |
-| Node | 107.9 | 1,244 | 1.9x ms, 0.54x MB/s |
-| Python | 3,455.0 | 39 | 59.8x ms, 0.02x MB/s |
-| Bend | 486.0 | 276 | 8.4x ms, 0.12x MB/s |
+| C | 58.1 | 2,308 | 1.0x ms, 0.99x MB/s |
+| Rust | 57.8 | 2,323 | 1.0x ms, 1.00x MB/s |
+| Bun | 474.0 | 283 | 8.2x ms, 0.12x MB/s |
+| Node | 107.6 | 1,247 | 1.9x ms, 0.54x MB/s |
+| Python | 3,451.3 | 39 | 59.7x ms, 0.02x MB/s |
+| Bend | 502.0 | 267 | 8.7x ms, 0.12x MB/s |
 
 Bend `echo` is hundreds of ms (well above `IO.now()`’s 1 ms ticks); checksum walks received bytes via `Bytes.to_string` and the same u32 mix as the other variants.
 
