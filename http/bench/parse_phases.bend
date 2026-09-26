@@ -90,7 +90,7 @@ def loop.split(n: Nat, +raw: String, acc: U32) -> U32:
 
 def loop.whole.score(acc: U32, hb: String & String) -> U32:
   (+head, +rest) = hb
-  (acc + Bool.to_u32(String.ends_with(head, "\r\n\r\n")) + len(rest, 0) : U32)
+  (acc + Bool.to_u32(Http.blank_end(head)) + len(rest, 0) : U32)
 
 def loop.whole(n: Nat, +raw: String, acc: U32) -> U32:
   match n:
@@ -137,7 +137,7 @@ def loop.start(n: Nat, +raw: String, acc: U32) -> U32:
 
 def loop.field_ops.kv(acc: U32, kv: String & String) -> U32:
   (k, v) = kv
-  (acc + len(k, 0) + len(String.trim(v), 0) : U32)
+  (acc + len(k, 0) + len(Http.trim(v), 0) : U32)
 
 def loop.field_ops.go(xs: List<&2, String>, acc: U32) -> U32:
   match xs:
