@@ -1,6 +1,6 @@
 import Base
 import ./http.bend as Http
-import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
+import 0x49814d83de8f70993a43e1002be29ecd/bytes.bend as Bytes
 
 def line(kind: String, url: String) -> IO(Unit):
   IO.print(kind ++ " " ++ url)

@@ -1,7 +1,7 @@
 # HTTP codec benchmark: parse and encode one fixed request and response (see README.md).
 import Base
 import ../http.bend as Http
-import 0xbf22530d1ea11c951d1ecaa353ed1580/bytes.bend as Bytes
+import 0x49814d83de8f70993a43e1002be29ecd/bytes.bend as Bytes
 
 def iters() -> Nat:
   20000n
