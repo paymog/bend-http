@@ -128,15 +128,64 @@ def sanitize(s: String) -> String:
     case SCon{Chr{+c}, t}:
       sanitize.cons(Chr{c}, sanitize(t), Bool.or(U32.is_eq(c, 13), U32.is_eq(c, 10)))
 
-def drop_cr.if(+s: String, cr: Bool) -> String:
+def drop_cr.last.if(cr: Bool, c: U32) -> String:
   match cr:
     case True{}:
-      String.take(s, (String.length(s) - 1n : Nat))
+      SNil{}
     case False{}:
-      s
+      SCon{Chr{c}, SNil{}}
 
-def drop_cr(+s: String) -> String:
-  drop_cr.if(s, String.ends_with(s, "\r"))
+def drop_cr.last(+c: U32) -> String:
+  drop_cr.last.if(U32.is_eq(c, 13), c)
+
+# prev is the char before s; it is kept unless it is a final CR.
+def drop_cr.go(s: String, prev: U32) -> String:
+  match s:
+    case SNil{}:
+      drop_cr.last(prev)
+    case SCon{Chr{c}, t}:
+      SCon{Chr{prev}, drop_cr.go(t, c)}
+
+def drop_cr(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{Chr{c}, t}:
+      drop_cr.go(t, c)
+
+# w holds the last four octets; a char past 255 clears it.
+def blank_end.go(s: String, w: U32) -> Bool:
+  match s:
+    case SNil{}:
+      U32.is_eq(w, 218762506)
+    case SCon{Chr{+c}, t}:
+      blank_end.go(t, Bool.pick(U32, U32.is_lt(c, 256), (w * 256 + c : U32), 0))
+
+# String.ends_with(s, "\r\n\r\n") in one pass, with no reversed copy.
+def blank_end(s: String) -> Bool:
+  blank_end.go(s, 0)
+
+def trim_end.cons(h: Char, r: String, space: Bool) -> String:
+  match r:
+    case SNil{}:
+      match space:
+        case True{}:
+          SNil{}
+        case False{}:
+          SCon{h, SNil{}}
+    case SCon{a, t}:
+      SCon{h, SCon{a, t}}
+
+# String.trim_end without the two reversed copies.
+def trim_end(s: String) -> String:
+  match s:
+    case SNil{}:
+      SNil{}
+    case SCon{+h, t}:
+      trim_end.cons(h, trim_end(t), Char.is_space(h))
+
+def trim(s: String) -> String:
+  trim_end(String.trim_start(s))
 
 # Bool.pick evaluates both arms; a split that recursed inside it would reverse acc at every byte.
 def take.cut(acc: String, rest: String) -> String & String:
@@ -184,21 +233,26 @@ def split_at_blank.go(s: String, e: Bool, w: U32, acc: String) -> String & Strin
           +w2 = (w * 256 + a : U32)
           split_at_blank.go(t, U32.is_eq(w2, 218762506), w2, SCon{Chr{a}, acc})
 
-def split_at_blank.scan.go(+raw: String, s: String, off: Nat, w: U32, e: Bool) -> String & String:
+# split_at_blank, plus whether the head ends in the blank line.
+def split_at_blank.flag.go(+raw: String, s: String, off: Nat, w: U32, e: Bool) -> String & String & Bool:
   match s:
     case SNil{}:
-      (String.take(raw, off), SNil{})
+      (String.take(raw, off), SNil{}, e)
     case SCon{Chr{+a}, t}:
       match e:
         case True{}:
-          (String.take(raw, off), SCon{Chr{a}, t})
+          (String.take(raw, off), SCon{Chr{a}, t}, True{})
         case False{}:
           +w2 = (w * 256 + a : U32)
           +off1 = (1n + off : Nat)
-          split_at_blank.scan.go(raw, t, off1, w2, U32.is_eq(w2, 218762506))
+          split_at_blank.flag.go(raw, t, off1, w2, U32.is_eq(w2, 218762506))
+
+def split_at_blank.pair(r: String & String & Bool) -> String & String:
+  (head, rest, whole) = r
+  (head, rest)
 
 def split_at_blank(+s: String) -> String & String:
-  split_at_blank.scan.go(s, s, 0n, 0, False{})
+  split_at_blank.pair(split_at_blank.flag.go(s, s, 0n, 0, False{}))
 
 def split_colon.go(s: String, acc: String, hit: Bool) -> String & String:
   match s:
@@ -238,12 +292,19 @@ def fields_put.dup(m: Map<&2, List<&2, String>>, k: String, v: String, bad: Bool
     case False{}:
       FieldsOk{add(m, k, v)}
 
+def fields_put.tracked(+m: Map<&2, List<&2, String>>, +k: String, v: String, t: Bool) -> Fields:
+  match t:
+    case True{}:
+      fields_put.dup(m, k, v, has_header(m, k))
+    case False{}:
+      FieldsOk{add(m, k, v)}
+
 def fields_put.key(+m: Map<&2, List<&2, String>>, +k: String, v: String) -> Fields:
-  fields_put.dup(m, k, v, Bool.and(tracked(k), has_header(m, k)))
+  fields_put.tracked(m, k, v, tracked(k))
 
 def fields_put.kv(m: Map<&2, List<&2, String>>, kv: String & String) -> Fields:
   (k, v) = kv
-  fields_put.key(m, k, String.trim(v))
+  fields_put.key(m, k, trim(v))
 
 def fields_put.fold(m: Map<&2, List<&2, String>>, line: String, fold: Bool) -> Fields:
   match fold:
@@ -774,13 +835,13 @@ def parse.head(+head: String, rest: String, whole: Bool) -> Got:
     case True{}:
       parse.lines(String.lines(head), rest)
 
-def parse.of(hb: String & String) -> Got:
-  (+head, rest) = hb
-  parse.head(head, rest, String.ends_with(head, "\r\n\r\n"))
+def parse.of(hb: String & String & Bool) -> Got:
+  (head, rest, whole) = hb
+  parse.head(head, rest, whole)
 
 # serve reads until this is not GotMore.
-def parse.got(raw: String) -> Got:
-  parse.of(split_at_blank(raw))
+def parse.got(+raw: String) -> Got:
+  parse.of(split_at_blank.flag.go(raw, raw, 0n, 0, False{}))
 
 
 def parse.req(g: Got) -> Maybe<&1, Req>:
@@ -923,7 +984,7 @@ def parse.res.blank(hd: String, rest: String, +closed: Bool, head: Bool, ok: Boo
 
 def parse.res.of(hb: String & String, closed: Bool, head: Bool) -> Frame:
   (+hd, rest) = hb
-  parse.res.blank(hd, rest, closed, head, String.ends_with(hd, "\r\n\r\n"))
+  parse.res.blank(hd, rest, closed, head, blank_end(hd))
 
 type Lead is Data:
   LeadCut{}
@@ -964,7 +1025,7 @@ def frame.lead.blank(+hd: String, rest: String, ok: Bool) -> Lead:
 
 def frame.lead(hb: String & String) -> Lead:
   (+hd, rest) = hb
-  frame.lead.blank(hd, rest, String.ends_with(hd, "\r\n\r\n"))
+  frame.lead.blank(hd, rest, blank_end(hd))
 
 def frame.at.cont(+raw: String, lead: Lead) -> String:
   match lead:
@@ -1395,7 +1456,7 @@ def req.v11.pick(+head: String, ok: Bool) -> Bool:
 
 def req.v11.of(hb: String & String) -> Bool:
   (+head, rest) = hb
-  req.v11.pick(head, String.ends_with(head, "\r\n\r\n"))
+  req.v11.pick(head, blank_end(head))
 
 def req.v11(+raw: String) -> Bool:
   req.v11.of(split_at_blank(raw))
@@ -2127,7 +2188,7 @@ def ce.norm(xs: List<&2, String>) -> List<&2, String>:
     case Nil{}:
       Nil{}
     case Con{v, t}:
-      ce.keep(String.to_lower(String.trim(v)), ce.norm(t))
+      ce.keep(String.to_lower(trim(v)), ce.norm(t))
 
 def ce.split(xs: List<&2, String>) -> List<&2, String>:
   match xs:
