@@ -913,7 +913,7 @@ def parse.res.of(hb: String & String, closed: Bool, head: Bool) -> Frame:
 type Lead is Data:
   LeadCut{}
   LeadFinal{}
-  LeadSkip{rest: String}
+  LeadSkip{+rest: String}
 
 def frame.lead.if(rest: String, interim: Bool) -> Lead:
   match interim:
@@ -951,18 +951,6 @@ def frame.lead(hb: String & String) -> Lead:
   (+hd, rest) = hb
   frame.lead.blank(hd, rest, String.ends_with(hd, "\r\n\r\n"))
 
-def frame.at.zero.go(+raw: String, closed: Bool, head: Bool, lead: Lead) -> Frame:
-  match lead:
-    case LeadCut{}:
-      frame.cut(closed)
-    case LeadFinal{}:
-      parse.res.of(split_at_blank(raw), closed, head)
-    case LeadSkip{rest}:
-      FrameBad{}
-
-def frame.at.zero(+raw: String, closed: Bool, head: Bool) -> Frame:
-  frame.at.zero.go(raw, closed, head, frame.lead(split_at_blank(raw)))
-
 def frame.at.cont(+raw: String, lead: Lead) -> String:
   match lead:
     case LeadCut{}:
@@ -972,13 +960,47 @@ def frame.at.cont(+raw: String, lead: Lead) -> String:
     case LeadSkip{rest}:
       rest
 
+def frame.at.zero.go(+raw: String, closed: Bool, head: Bool, lead: Lead) -> Frame:
+  match lead:
+    case LeadCut{}:
+      frame.cut(closed)
+    case LeadFinal{}:
+      parse.res.of(split_at_blank(raw), closed, head)
+    case LeadSkip{rest}:
+      FrameBad{}
+
+def frame.at.zero.of(+raw: String, closed: Bool, head: Bool) -> Frame:
+  frame.at.zero.go(raw, closed, head, frame.lead(split_at_blank(raw)))
+
+def frame.at.pos.do(f: Nat, +raw: String, closed: Bool, head: Bool, hb: String & String, lead: Lead) -> Frame:
+  match f:
+    case 0n:
+      match lead:
+        case LeadCut{}:
+          frame.cut(closed)
+        case LeadFinal{}:
+          parse.res.of(hb, closed, head)
+        case LeadSkip{+rest}:
+          frame.at.zero.of(rest, closed, head)
+    case 1n+g:
+      match lead:
+        case LeadCut{}:
+          frame.cut(closed)
+        case LeadFinal{}:
+          parse.res.of(hb, closed, head)
+        case LeadSkip{+rest}:
+          frame.at.pos.do(g, rest, closed, head, split_at_blank(rest), frame.lead(split_at_blank(rest)))
+
+def frame.at.zero(+raw: String, closed: Bool, head: Bool) -> Frame:
+  frame.at.zero.of(raw, closed, head)
+
 # ponytail: 8 interim responses; raise the fuel if a server sends more
 def frame.at(fuel: Nat, +raw: String, closed: Bool, head: Bool) -> Frame:
   match fuel:
     case 0n:
       frame.at.zero(raw, closed, head)
     case 1n+f:
-      frame.at(f, frame.at.cont(raw, frame.lead(split_at_blank(raw))), closed, head)
+      frame.at.pos.do(f, raw, closed, head, split_at_blank(raw), frame.lead(split_at_blank(raw)))
 
 # frame(bytes so far, server closed?, request was HEAD?)
 def frame(raw: String, closed: Bool, head: Bool) -> Frame:
