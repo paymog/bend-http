@@ -219,6 +219,58 @@ law omap_get_put_other_key:
   {O.OMap.get(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k2, v), k)
    == O.OMap.get(~K, ~V, ~cmp, m, k) : Maybe<&2, V>}
 
+
+# Ghost weight from tree shape: weight = stored size + 1, so OTip has weight 1 and
+# OBin{lo, hi} has weight w(lo) + w(hi). Balance is Hirai-Yamamoto (delta 3).
+def omap_weight(-K: Data, -V: Data, m: O.OMap<K, V>) -> Nat:
+  match m:
+    case O.OTip{}:
+      1n
+    case O.OBin{s, k, v, lo, hi}:
+      Nat.add(omap_weight(K, V, lo), omap_weight(K, V, hi))
+
+def weight_ok(+wl: Nat, +wh: Nat) -> Bool:
+  Nat.is_le(wh, Nat.mul(3n, wl)) && Nat.is_le(wl, Nat.mul(3n, wh))
+
+def weight_balanced(-K: Data, -V: Data, m: O.OMap<K, V>) -> Bool:
+  match m:
+    case O.OTip{}:
+      True{}
+    case O.OBin{s, k, v, +lo, +hi}:
+      weight_ok(omap_weight(K, V, lo), omap_weight(K, V, hi))
+        && weight_balanced(K, V, lo) && weight_balanced(K, V, hi)
+
+law omap_new_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  {weight_balanced(K, V, O.OMap.new(K, V)) == True{} : Bool}
+
+law omap_m3_weight_balanced:
+  {weight_balanced(U32, U32, m3()) == True{} : Bool}
+
+law omap_m7_weight_balanced:
+  {weight_balanced(U32, U32, m7()) == True{} : Bool}
+
+law omap_put_tip_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for +k: K
+  for +v: V
+  {weight_balanced(K, V, O.OMap.put(~K, ~V, ~cmp, O.OMap.new(K, V), k, v))
+   == True{} : Bool}
+
+law omap_put_m3_key4_weight_balanced:
+  {weight_balanced(U32, U32, O.OMap.put(~U32, ~U32, ~U32.cmp, m3(), 4, 40))
+   == True{} : Bool}
+
+law omap_del_m7_key4_weight_balanced:
+  {weight_balanced(U32, U32, O.OMap.del(~U32, ~U32, ~U32.cmp, m7(), 4))
+   == True{} : Bool}
+
+# Universal put/del preservation (omap_put_weight_balanced / omap_del_weight_balanced)
+# blocked on a Nat order library and U32–Nat bridge below a size bound; see #88.
+
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
    == [1, 2, 3, 4, 5] : List<&2, U32>}

@@ -1218,3 +1218,30 @@ def del.bnd(
 
 def Laws.omap_del_searchtree(K, V, cmp, refl, eq, flip, trans, m, tree, k):
   del.bnd(~K, ~V, ~cmp, ~trans, m, None{}, None{}, k, tree)
+
+def Laws.omap_new_weight_balanced(K, V):
+  {==}
+
+def Laws.omap_m3_weight_balanced():
+  {==}
+
+def Laws.omap_m7_weight_balanced():
+  {==}
+
+def put_tip_bin_wbal(
+  ~K: Data, ~V: Data, +k: K, +v: V
+) -> {Laws.weight_balanced(K, V, O.OBin{1, k, v, O.OTip{}, O.OTip{}}) == True{} : Bool}:
+  and_i(Laws.weight_ok(1n, 1n),
+    Bool.and(Laws.weight_balanced(K, V, O.OTip{}), Laws.weight_balanced(K, V, O.OTip{})),
+    {==}, {==})
+
+def Laws.omap_put_tip_weight_balanced(K, V, cmp, k, v):
+  rw(O.OMap<K, V>, m => {Laws.weight_balanced(K, V, m) == True{} : Bool},
+    O.OMap.put(~K, ~V, ~cmp, O.OMap.new(K, V), k, v), O.OBin{1, k, v, O.OTip{}, O.OTip{}},
+    {==}, put_tip_bin_wbal(~K, ~V, k, v))
+
+def Laws.omap_put_m3_key4_weight_balanced():
+  {==}
+
+def Laws.omap_del_m7_key4_weight_balanced():
+  {==}
