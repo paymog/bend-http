@@ -92,6 +92,133 @@ law oset_has_del:
      O.OSet.del(~U32, ~U32.cmp, O.OSet.add(~U32, ~U32.cmp, O.OSet.new(U32), 3), 3), 3)
    == False{} : Bool}
 
+# The laws below hold for every comparator that is a total order, with EQ
+# meaning equal keys.
+def flip(c: Cmp) -> Cmp:
+  match c:
+    case LT{}:
+      GT{}
+    case EQ{}:
+      EQ{}
+    case GT{}:
+      LT{}
+
+def above(~K: Data, ~cmp: K -> K -> Cmp, lb: Maybe<&2, K>, +k: K) -> Bool:
+  match lb:
+    case None{}:
+      True{}
+    case Some{b}:
+      Cmp.is_lt(cmp(b, k))
+
+def below(~K: Data, ~cmp: K -> K -> Cmp, ub: Maybe<&2, K>, +k: K) -> Bool:
+  match ub:
+    case None{}:
+      True{}
+    case Some{b}:
+      Cmp.is_lt(cmp(k, b))
+
+# Every key of m lies strictly between the bounds, in search-tree order.
+def bounded(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>, +lb: Maybe<&2, K>,
+  +ub: Maybe<&2, K>
+) -> Bool:
+  match m:
+    case O.OTip{}:
+      True{}
+    case O.OBin{s, +k, v, lo, hi}:
+      above(~K, ~cmp, lb, k) && below(~K, ~cmp, ub, k)
+        && bounded(~K, ~V, ~cmp, lo, lb, Some{k})
+        && bounded(~K, ~V, ~cmp, hi, Some{k}, ub)
+
+def searchtree(~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>) -> Bool:
+  bounded(~K, ~V, ~cmp, m, None{}, None{})
+
+def sorted.go(~K: Data, ~cmp: K -> K -> Cmp, xs: List<&2, K>, +prev: K) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{+h, t}:
+      Cmp.is_lt(cmp(prev, h)) && sorted.go(~K, ~cmp, t, h)
+
+def sorted(~K: Data, ~cmp: K -> K -> Cmp, xs: List<&2, K>) -> Bool:
+  match xs:
+    case Nil{}:
+      True{}
+    case Con{+h, t}:
+      sorted.go(~K, ~cmp, t, h)
+
+law omap_new_searchtree:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  {searchtree(~K, ~V, ~cmp, O.OMap.new(K, V)) == True{} : Bool}
+
+law omap_put_searchtree:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for ~refl: @x: K -> {cmp(x, x) == EQ{} : Cmp}
+  for ~eq: @x: K -> @y: K -> {cmp(x, y) == EQ{} : Cmp} -> {x == y : K}
+  for ~flip: @x: K -> @y: K -> {cmp(y, x) == flip(cmp(x, y)) : Cmp}
+  for ~trans: @x: K -> @y: K -> @z: K -> {cmp(x, y) == LT{} : Cmp} -> {cmp(y, z) == LT{} : Cmp} -> {cmp(x, z) == LT{} : Cmp}
+  for m: O.OMap<K, V>
+  for tree: {searchtree(~K, ~V, ~cmp, m) == True{} : Bool}
+  for +k: K
+  for +v: V
+  {searchtree(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k, v)) == True{} : Bool}
+
+law omap_del_searchtree:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for ~refl: @x: K -> {cmp(x, x) == EQ{} : Cmp}
+  for ~eq: @x: K -> @y: K -> {cmp(x, y) == EQ{} : Cmp} -> {x == y : K}
+  for ~flip: @x: K -> @y: K -> {cmp(y, x) == flip(cmp(x, y)) : Cmp}
+  for ~trans: @x: K -> @y: K -> @z: K -> {cmp(x, y) == LT{} : Cmp} -> {cmp(y, z) == LT{} : Cmp} -> {cmp(x, z) == LT{} : Cmp}
+  for m: O.OMap<K, V>
+  for tree: {searchtree(~K, ~V, ~cmp, m) == True{} : Bool}
+  for +k: K
+  {searchtree(~K, ~V, ~cmp, O.OMap.del(~K, ~V, ~cmp, m, k)) == True{} : Bool}
+
+law omap_searchtree_keys_sorted:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for m: O.OMap<K, V>
+  for tree: {searchtree(~K, ~V, ~cmp, m) == True{} : Bool}
+  {sorted(~K, ~cmp, O.OMap.keys(K, V, m)) == True{} : Bool}
+
+law omap_get_put_same:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for ~refl: @x: K -> {cmp(x, x) == EQ{} : Cmp}
+  for ~eq: @x: K -> @y: K -> {cmp(x, y) == EQ{} : Cmp} -> {x == y : K}
+  for ~flip: @x: K -> @y: K -> {cmp(y, x) == flip(cmp(x, y)) : Cmp}
+  for ~trans: @x: K -> @y: K -> @z: K -> {cmp(x, y) == LT{} : Cmp} -> {cmp(y, z) == LT{} : Cmp} -> {cmp(x, z) == LT{} : Cmp}
+  for m: O.OMap<K, V>
+  for tree: {searchtree(~K, ~V, ~cmp, m) == True{} : Bool}
+  for +k: K
+  for +v: V
+  {O.OMap.get(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k, v), k) == Some{v} : Maybe<&2, V>}
+
+law omap_get_put_other_key:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for ~refl: @x: K -> {cmp(x, x) == EQ{} : Cmp}
+  for ~eq: @x: K -> @y: K -> {cmp(x, y) == EQ{} : Cmp} -> {x == y : K}
+  for ~flip: @x: K -> @y: K -> {cmp(y, x) == flip(cmp(x, y)) : Cmp}
+  for ~trans: @x: K -> @y: K -> @z: K -> {cmp(x, y) == LT{} : Cmp} -> {cmp(y, z) == LT{} : Cmp} -> {cmp(x, z) == LT{} : Cmp}
+  for m: O.OMap<K, V>
+  for tree: {searchtree(~K, ~V, ~cmp, m) == True{} : Bool}
+  for +k2: K
+  for +k: K
+  for ne: {cmp(k2, k) != EQ{} : Cmp}
+  for +v: V
+  {O.OMap.get(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k2, v), k)
+   == O.OMap.get(~K, ~V, ~cmp, m, k) : Maybe<&2, V>}
+
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
    == [1, 2, 3, 4, 5] : List<&2, U32>}

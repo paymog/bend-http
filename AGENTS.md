@@ -40,6 +40,7 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `LAWS.bend`: the claims, each `law name:` over an equality `{a == b : T}`. The human owns this file. Change a law only when the user asks.
 - `PROOF.bend`: imports `LAWS.bend` and proves each law as `def Laws.name():`. Most laws here are concrete fixtures, so the proof is `{==}` (both sides compute to the same term).
 - `bend PROOF.bend` is the gate. It prints "All terms check." when every law holds. An open or false law fails it.
+- A universal law over a comparator takes the comparator and its order facts as templates (`for ~cmp`, `for ~trans: ...`), so the proof can use each fact many times. The checker checks a template def once, against opaque arguments, so lemmas can be plain template defs. `U32` is opaque there too: `(x + 0 : U32)` does not reduce to `x`, so a law that needs `U32` arithmetic cannot be proved. `collections/PROOF.bend` shows the patterns, such as `split` for a goal that branches on a comparison.
 
 ## Repo facts
 
