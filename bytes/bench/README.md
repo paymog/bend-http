@@ -35,38 +35,34 @@ Each language uses its idiomatic stdlib calls: `memmem`/`memcmp` in C, `windows(
 
 In Bend, `sum` goes through the per-byte `byte(a, i)` read, which is what a `Bytes.get` caller would pay. `packed.bend` also prints two more ops that the table leaves out. `sum` reads a word at a time, and is slower (see below). `find_swar` skips words that hold no `\r`, but it does not beat the byte loop.
 
-## Build growth
-
-M4 Pro, macOS, Bend 2.0.28, 2026-09-25. Median of three runs, except Python (one run). Times are in ms.
-
-| bytes | C | Rust | Go | Bun | Node | Python | Bend Array |
-|---|---:|---:|---:|---:|---:|---:|---:|
-| 1,000,000 | 0.3 | 0.3 | 0.4 | 4.5 | 3.1 | 34.6 | 8 |
-| 4,000,000 | 1.3 | 1.9 | 1.4 | 17.5 | 8.6 | 138.4 | 34 |
-
-Four times as many one-byte appends took Bend Array 4.25 times as long. This is consistent with linear growth; the two sizes do not prove an asymptotic bound.
-
 ## Results
 
-Original seven-op results: M4 Pro, macOS, Bend 2.0.25, 2026-09-24. Times are in ms; `Nx` is the multiple of the fastest variant for that op.
+M4 Pro, macOS, 2026-09-25, from `python3 run.py`. Median of three runs, except Python and Bend String (one run). Every variant that runs at 256 MiB printed the same checksums. Times are in ms; `Nx` is the multiple of the fastest variant for that op.
+
+Versions: Bend 2.0.28, Apple clang 17.0.0, rustc 1.91.0, Go 1.27.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6.
 
 | op | C | Rust | Go | Bun | Node | Python | Bend Array | Bend String |
 |---|---|---|---|---|---|---|---|---|
-| fill | 18.6 (1.1x) | 17.6 (1.0x) | 90.8 (5.2x) | 118.8 (6.7x) | 169.1 (9.6x) | 11,391.5 (647.2x) | 44.0 (2.5x) | 2,912.0 (165.4x) |
-| sum | 11.5 (1.0x) | 14.9 (1.3x) | 78.0 (6.8x) | 557.7 (48.3x) | 1,307.1 (113.3x) | 14,247.9 (1234.6x) | 32.0 (2.8x) | 1,168.0 (101.2x) |
-| find | 149.2 (15.5x) | 69.9 (7.3x) | 11.7 (1.2x) | 11.9 (1.2x) | 9.6 (1.0x) | 138.7 (14.4x) | 188.0 (19.6x) | 1,136.0 (118.2x) |
-| slice | 8.6 (1.0x) | 10.4 (1.2x) | 10.0 (1.2x) | 8.7 (1.0x) | 8.4 (1.0x) | 10.8 (1.3x) | 19.0 (2.3x) | 4,164.0 (494.1x) |
-| concat | 24.4 (1.5x) | 16.7 (1.0x) | 178.0 (10.7x) | 38.3 (2.3x) | 44.3 (2.7x) | 21.5 (1.3x) | 72.0 (4.3x) | 5,904.0 (354.4x) |
-| random | 59.0 (1.0x) | 57.9 (1.0x) | 78.4 (1.4x) | 1,064.9 (18.4x) | 117.7 (2.0x) | 5,229.6 (90.4x) | 58.0 (1.0x) | n/a |
-| equal | 5.0 (1.0x) | 10.3 (2.1x) | 6.5 (1.3x) | 10.8 (2.2x) | 16.0 (3.3x) | 4.8 (1.0x) | 23.0 (4.7x) | 7,608.0 (1569.2x) |
-| geomean vs fastest | 1.6x | 1.6x | 2.7x | 4.5x | 4.1x | 20.9x | 3.5x | 285.7x |
+| fill | 16.6 (1.1x) | 15.3 (1.0x) | 94.7 (6.2x) | 116.5 (7.6x) | 155.7 (10.2x) | 10,985.1 (716.9x) | 46.0 (3.0x) | 2,936.0 (191.6x) |
+| sum | 10.0 (1.1x) | 9.0 (1.0x) | 74.2 (8.3x) | 485.9 (54.2x) | 1,166.2 (130.0x) | 14,186.2 (1581.8x) | 39.0 (4.3x) | 1,552.0 (173.0x) |
+| find | 136.1 (14.8x) | 66.8 (7.3x) | 11.4 (1.2x) | 11.0 (1.2x) | 9.2 (1.0x) | 191.8 (20.8x) | 190.0 (20.6x) | 1,692.0 (183.7x) |
+| slice | 8.4 (1.1x) | 7.7 (1.0x) | 9.1 (1.2x) | 7.9 (1.0x) | 7.9 (1.0x) | 10.8 (1.4x) | 19.0 (2.5x) | 3,784.0 (490.6x) |
+| concat | 14.5 (1.0x) | 15.8 (1.1x) | 159.9 (11.0x) | 34.3 (2.4x) | 41.2 (2.8x) | 21.9 (1.5x) | 63.0 (4.3x) | 5,768.0 (397.2x) |
+| random | 56.8 (1.0x) | 58.9 (1.0x) | 70.2 (1.2x) | 999.6 (17.6x) | 110.8 (2.0x) | 4,938.5 (86.9x) | 62.0 (1.1x) | n/a |
+| equal | 5.2 (1.0x) | 12.5 (2.4x) | 9.8 (1.9x) | 11.1 (2.1x) | 11.0 (2.1x) | 5.2 (1.0x) | 24.0 (4.6x) | 6,492.0 (1251.1x) |
+| build_1000000 | 0.3 (1.0x) | 0.4 (1.2x) | 0.4 (1.2x) | 5.6 (17.8x) | 3.1 (9.9x) | 36.6 (117.4x) | 8.0 (25.6x) | n/a |
+| build_4000000 | 1.3 (1.0x) | 1.8 (1.4x) | 1.4 (1.1x) | 18.2 (14.3x) | 8.8 (7.0x) | 146.3 (115.2x) | 36.0 (28.3x) | n/a |
+| build (4M / 1M) | 4.1x | 4.9x | 3.7x | 3.3x | 2.9x | 4.0x | 4.5x | n/a |
+| geomean vs fastest | 1.4x | 1.5x | 2.4x | 6.1x | 4.7x | 33.9x | 6.0x | 337.8x |
 
-`String` has no `random` column, because every read walks the list and is O(n). Its geomean covers the other six ops.
+`String` has no `random` row, because every read walks the list and is O(n). It has no `build` rows either (see above). Its geomean covers the other six ops.
+
+Four times as many one-byte appends took Bend Array 4.5 times as long. This is consistent with linear growth; the two sizes do not prove an asymptotic bound.
 
 ## Reading it
 
-- A packed `Array` is 100 to 1,500 times faster than `String`, and it uses 1/16 of the memory.
-- Overall it lands between Go and Node. Random reads match C.
+- A packed `Array` is 9 to 270 times faster than `String`, and it uses 1/16 of the memory.
+- Over the seven buffer ops, without the `build` rows, the geomean is 3.9x for Bend Array, 4.0x for Node, and 2.9x for Go. Random reads match C. The one-byte `build` appends are 25 to 28 times slower than C, which pulls the full geomean to 6.0x.
 - `find` is the weak spot. Go and JS hand it to SIMD `memchr`/`memmem`, and a Bend loop cannot call host code outside `IO`. Closing that gap probably needs native `Array` primitives in Bend itself. The C and Python columns are slow here for a different reason: macOS `memmem` and CPython's search do not use SIMD for this pattern.
 - `concat` keeps the chunks in a list and copies them once at the end. `Array.join` might make that O(1) per chunk; it has not been tried.
 
