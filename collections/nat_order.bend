@@ -113,6 +113,13 @@ def rw(-A: Type, -P: A -> Type, -a: A, -b: A, e: {a == b : A}, p: P(b)) -> P(a):
   %Equal.sym(A, a, b, e) : P(_)
   p
 
+def add_zero_right(a: Nat) -> {Nat.add(a, 0n) == a : Nat}:
+  match a:
+    case 0n:
+      {==}
+    case 1n+ +p:
+      rw(Nat, x => {1n+x == 1n+p : Nat}, Nat.add(p, 0n), p, add_zero_right(p), {==})
+
 def add_succ_right(a: Nat, p: Nat) -> {Nat.add(a, 1n+p) == Nat.add(1n, Nat.add(a, p)) : Nat}:
   match a:
     case 0n:
@@ -156,4 +163,17 @@ def le_add_right(+a: Nat, +b: Nat, c: Nat, e: {Nat.is_le(a, b) == True{} : Bool}
       le_add0(a, b, e)
     case 1n+ +cp:
       le_add_right_succ(a, b, cp, le_add_right(a, b, cp, e))
+
+def le_b_add_c(+b: Nat, c: Nat) -> {Nat.is_le(b, Nat.add(b, c)) == True{} : Bool}:
+  match c:
+    case 0n:
+      rw(Nat, x => {Nat.is_le(b, x) == True{} : Bool}, Nat.add(b, 0n), b, add_zero_right(b), le_refl(b))
+    case 1n+ +cp:
+      le_trans(b, Nat.add(b, cp), Nat.add(b, 1n+cp), le_b_add_c(b, cp),
+        rw(Nat, x => {Nat.is_le(Nat.add(b, cp), x) == True{} : Bool}, Nat.add(b, 1n+cp),
+          Nat.add(1n, Nat.add(b, cp)), add_succ_right(b, cp), le_suc(Nat.add(b, cp))))
+
+def le_add_tail(+a: Nat, +b: Nat, +c: Nat, e: {Nat.is_le(a, b) == True{} : Bool})
+  -> {Nat.is_le(a, Nat.add(b, c)) == True{} : Bool}:
+  le_trans(a, b, Nat.add(b, c), e, le_b_add_c(b, c))
 
