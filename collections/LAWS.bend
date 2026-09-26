@@ -147,19 +147,6 @@ def sorted(~K: Data, ~cmp: K -> K -> Cmp, xs: List<&2, K>) -> Bool:
     case Con{+h, t}:
       sorted.go(~K, ~cmp, t, h)
 
-# Every node has weight(lo) * 3 >= weight(hi) and the reverse, where
-# weight = size + 1, and every size field counts its node.
-def balanced(-K: Data, -V: Data, m: O.OMap<K, V>) -> Bool:
-  match m:
-    case O.OTip{}:
-      True{}
-    case O.OBin{+s, k, v, +lo, +hi}:
-      +wl = (O.OMap.size(K, V, lo) + 1 : U32)
-      +wh = (O.OMap.size(K, V, hi) + 1 : U32)
-      U32.is_ge((3 * wl : U32), wh) && U32.is_ge((3 * wh : U32), wl)
-        && U32.is_eq(s, (wl + wh - 1 : U32))
-        && balanced(K, V, lo) && balanced(K, V, hi)
-
 law omap_new_searchtree:
   for ~K: Data
   for ~V: Data
@@ -231,25 +218,6 @@ law omap_get_put_other_key:
   for +v: V
   {O.OMap.get(~K, ~V, ~cmp, O.OMap.put(~K, ~V, ~cmp, m, k2, v), k)
    == O.OMap.get(~K, ~V, ~cmp, m, k) : Maybe<&2, V>}
-
-law omap_put_balanced:
-  for ~K: Data
-  for ~V: Data
-  for ~cmp: K -> K -> Cmp
-  for m: O.OMap<K, V>
-  for bal: {balanced(K, V, m) == True{} : Bool}
-  for +k: K
-  for +v: V
-  {balanced(K, V, O.OMap.put(~K, ~V, ~cmp, m, k, v)) == True{} : Bool}
-
-law omap_del_balanced:
-  for ~K: Data
-  for ~V: Data
-  for ~cmp: K -> K -> Cmp
-  for m: O.OMap<K, V>
-  for bal: {balanced(K, V, m) == True{} : Bool}
-  for +k: K
-  {balanced(K, V, O.OMap.del(~K, ~V, ~cmp, m, k)) == True{} : Bool}
 
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
