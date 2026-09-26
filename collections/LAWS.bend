@@ -240,36 +240,62 @@ def weight_balanced(-K: Data, -V: Data, m: O.OMap<K, V>) -> Bool:
       weight_ok(omap_weight(K, V, lo), omap_weight(K, V, hi))
         && weight_balanced(K, V, lo) && weight_balanced(K, V, hi)
 
+def g_heavy_hi(-K: Data, -V: Data, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> Bool:
+  Nat.is_gt(omap_weight(K, V, hi), Nat.mul(3n, omap_weight(K, V, lo)))
+
+def g_heavy_lo(-K: Data, -V: Data, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> Bool:
+  Nat.is_gt(omap_weight(K, V, lo), Nat.mul(3n, omap_weight(K, V, hi)))
+
+def g_balance(-K: Data, -V: Data, k: K, v: V, +lo: O.OMap<K, V>, +hi: O.OMap<K, V>) -> O.OMap<K, V>:
+  O.OMap.balance.if(K, V, g_heavy_hi(K, V, lo, hi), g_heavy_lo(K, V, lo, hi), k, v, lo, hi)
+
+def g_put(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>, +k: K, +v: V
+) -> O.OMap<K, V>:
+  match m:
+    case O.OTip{}:
+      O.OBin{1, k, v, O.OTip{}, O.OTip{}}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      O.Cmp.case(O.OMap<K, V>, cmp(k, key),
+        u => g_balance(K, V, key, val, O.OMap.put(~K, ~V, ~cmp, lo, k, v), hi),
+        u => O.OBin{s, key, v, lo, hi},
+        u => g_balance(K, V, key, val, lo, O.OMap.put(~K, ~V, ~cmp, hi, k, v)))
+
+def g_del(
+  ~K: Data, ~V: Data, ~cmp: K -> K -> Cmp, m: O.OMap<K, V>, +k: K
+) -> O.OMap<K, V>:
+  match m:
+    case O.OTip{}:
+      O.OTip{}
+    case O.OBin{+s, +key, +val, +lo, +hi}:
+      O.Cmp.case(O.OMap<K, V>, cmp(k, key),
+        u => g_balance(K, V, key, val, O.OMap.del(~K, ~V, ~cmp, lo, k), hi),
+        u => O.OMap.glue(K, V, lo, hi),
+        u => g_balance(K, V, key, val, lo, O.OMap.del(~K, ~V, ~cmp, hi, k)))
+
 law omap_new_weight_balanced:
   for ~K: Data
   for ~V: Data
   {weight_balanced(K, V, O.OMap.new(K, V)) == True{} : Bool}
 
-law omap_m3_weight_balanced:
-  {weight_balanced(U32, U32, m3()) == True{} : Bool}
-
-law omap_m7_weight_balanced:
-  {weight_balanced(U32, U32, m7()) == True{} : Bool}
-
-law omap_put_tip_weight_balanced:
+law omap_put_weight_balanced:
   for ~K: Data
   for ~V: Data
   for ~cmp: K -> K -> Cmp
+  for m: O.OMap<K, V>
+  for bal: {weight_balanced(K, V, m) == True{} : Bool}
   for +k: K
   for +v: V
-  {weight_balanced(K, V, O.OMap.put(~K, ~V, ~cmp, O.OMap.new(K, V), k, v))
-   == True{} : Bool}
+  {weight_balanced(K, V, g_put(~K, ~V, ~cmp, m, k, v)) == True{} : Bool}
 
-law omap_put_m3_key4_weight_balanced:
-  {weight_balanced(U32, U32, O.OMap.put(~U32, ~U32, ~U32.cmp, m3(), 4, 40))
-   == True{} : Bool}
-
-law omap_del_m7_key4_weight_balanced:
-  {weight_balanced(U32, U32, O.OMap.del(~U32, ~U32, ~U32.cmp, m7(), 4))
-   == True{} : Bool}
-
-# Universal put/del preservation (omap_put_weight_balanced / omap_del_weight_balanced)
-# blocked on a Nat order library and U32–Nat bridge below a size bound; see #88.
+law omap_del_weight_balanced:
+  for ~K: Data
+  for ~V: Data
+  for ~cmp: K -> K -> Cmp
+  for m: O.OMap<K, V>
+  for bal: {weight_balanced(K, V, m) == True{} : Bool}
+  for +k: K
+  {weight_balanced(K, V, g_del(~K, ~V, ~cmp, m, k)) == True{} : Bool}
 
 law vec_from_list:
   {V.Vec.to_list(~U32, V.Vec.from_list(~U32, [1, 2, 3, 4, 5]))
