@@ -1,4 +1,4 @@
 .worktrees/
-bytes/bench/out/
+*/bench/out/
 unicode/ucd/
 __pycache__/
