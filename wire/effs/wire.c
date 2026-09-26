@@ -97,26 +97,41 @@ static bool wire_late(u64 at) {
 #if defined(CID(recv)) || defined(CID(recv.words))
 
 // Not IO_READ: that would wait for readability before run, with no deadline.
-// w->size holds the deadline until the read lands.
+// w->size is the read deadline; w->made is the byte count to read; w->text
+// holds bytes received so far until the read completes.
 static Term wire_recv_go(Env e, IoWork* w, IoPack more, bool words) {
-  int     fd = (int)w->hand;
-  ssize_t n  = io_sys_end(w, recv(fd, w->data, (size_t)w->made, 0));
-  if (w->code == EAGAIN) {
-    if (!wire_late(w->size)) {
-      return io_wait_on(w, fd, POLLIN, w->size, more);
+  int     fd   = (int)w->hand;
+  u64     want = (u64)w->made;
+  u64     got  = (u64)(uintptr_t)w->text;
+  while (w->code == 0 && got < want) {
+    ssize_t n = recv(fd, w->data + got, (size_t)(want - got), 0);
+    if (n < 0 && errno == EAGAIN) {
+      w->text = (char*)(uintptr_t)got;
+      if (!wire_late(w->size)) {
+        return io_wait_on(w, fd, POLLIN, w->size, more);
+      }
+      w->code = ETIMEDOUT;
+      break;
     }
-    w->code = ETIMEDOUT;
+    if (n <= 0) {
+      w->code = n == 0 ? ECONNRESET : errno;
+      break;
+    }
+    got += (u64)n;
   }
+  w->text = NULL;
   Term r = w->code ? io_fail(e, w->code, NULL)
-    : io_done(e, words ? wire_words(e, w->data, (u64)n) : wire_bytes(e, w->data, (u64)n));
+    : io_done(e, words ? wire_words(e, w->data, got) : wire_bytes(e, w->data, got));
   free(w->data);
   return io_tup(e, io_hand(w->hand), r);
 }
 
 static void wire_recv_init(Term* f, IoWork* w) {
   w->hand = (intptr_t)io_hand_v(f[0]);
-  w->made = f[1] < INT32_MAX ? (intptr_t)f[1] : INT32_MAX;
-  w->data = io_mem(malloc((size_t)w->made + 1));
+  u64 want = f[1] < INT32_MAX ? (u64)f[1] : INT32_MAX;
+  w->made = (intptr_t)want;
+  w->data = io_mem(malloc((size_t)want + 1));
+  w->text = NULL;
   w->size = wire_deadline((u64)f[2]);
 }
 

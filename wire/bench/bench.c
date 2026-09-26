@@ -1,6 +1,5 @@
 // Wire benchmark in C with raw TCP sockets (see README.md).
 #include <arpa/inet.h>
-#include <errno.h>
 #include <netinet/in.h>
 #include <pthread.h>
 #include <stdint.h>
@@ -11,9 +10,10 @@
 #include <time.h>
 #include <unistd.h>
 
-#define PORT 38475
+#define PORT 38501
 #define N 1048576
-#define CHK 470
+#define R 64
+#define CHK 3187671040u
 
 static volatile int ready;
 
@@ -28,8 +28,10 @@ static void fill(uint8_t *b) {
 		b[i] = (uint8_t)((i * 31 + 7) & 255);
 }
 
-static uint32_t checksum(const uint8_t *b) {
-	return (uint32_t)b[12345] + (uint32_t)b[N - 1];
+static uint32_t hash_buf(uint32_t h, const uint8_t *b) {
+	for (size_t i = 0; i < N; i++)
+		h = h * 31u + (uint32_t)b[i];
+	return h;
 }
 
 static int recv_all(int fd, uint8_t *b, size_t n) {
@@ -76,10 +78,14 @@ static void *server(void *arg) {
 	if (conn < 0)
 		return NULL;
 	uint8_t *buf = malloc(N);
-	if (!buf || recv_all(conn, buf, N) < 0 || send_all(conn, buf, N) < 0) {
-		free(buf);
-		close(conn);
+	if (!buf)
 		return NULL;
+	for (int round = 0; round < R; round++) {
+		if (recv_all(conn, buf, N) < 0 || send_all(conn, buf, N) < 0) {
+			free(buf);
+			close(conn);
+			return NULL;
+		}
 	}
 	free(buf);
 	close(conn);
@@ -110,16 +116,14 @@ int main(void) {
 	if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) < 0)
 		return 1;
 
+	uint32_t cs = 0;
 	double t0 = now_ms();
-	if (send_all(fd, buf, N) < 0)
-		return 1;
-	printf("send\t%.3f\t%u\n", now_ms() - t0, CHK);
-
-	t0 = now_ms();
-	if (recv_all(fd, buf, N) < 0)
-		return 1;
-	uint32_t cs = checksum(buf);
-	printf("recv\t%.3f\t%u\n", now_ms() - t0, cs);
+	for (int round = 0; round < R; round++) {
+		if (send_all(fd, buf, N) < 0 || recv_all(fd, buf, N) < 0)
+			return 1;
+		cs = hash_buf(cs, buf);
+	}
+	printf("echo\t%.3f\t%u\n", now_ms() - t0, cs);
 
 	close(fd);
 	free(buf);

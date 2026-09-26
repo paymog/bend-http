@@ -6,7 +6,10 @@ from pathlib import Path
 HERE = Path(__file__).resolve().parent
 OUT = HERE / "out"
 RUNS = int(sys.argv[1]) if len(sys.argv) > 1 else 3
-OPS = ["send", "recv"]
+R = 64
+N = 1_048_576
+# One timed op: R round trips, each send N bytes and recv N bytes.
+BYTES = R * N * 2
 ENV = {**os.environ, "BEND_NO_TELEMETRY": "1", "NODE_NO_WARNINGS": "1"}
 
 VARIANTS = {
@@ -16,10 +19,14 @@ VARIANTS = {
         [OUT / "rs"],
     ),
     "Bun": (None, ["bun", "bench.ts"]),
-    "Node": (None, ["node", "bench.ts"]),
+    "Node": (None, ["node", "--no-warnings", "bench.ts"]),
     "Python": (None, ["python3", "bench.py"]),
     "Bend": (["bend", "bench.bend", "-o", OUT / "bend"], [OUT / "bend"]),
 }
+
+
+def mbps(ms: float) -> float:
+    return (BYTES / 1_000_000) / (ms / 1000.0)
 
 
 def main():
@@ -39,19 +46,26 @@ def main():
         checks[name] = {op: c for op, (_, c) in runs[0].items()}
         print(f"ran {name}", file=sys.stderr)
 
-    for op in OPS:
+    for op in table[next(iter(table))]:
         seen = {checks[n].get(op) for n in checks}
         if len(seen) != 1:
             sys.exit(f"checksum mismatch in {op}: {[(n, checks[n].get(op)) for n in checks]}")
         print(f"{op} checksum {seen.pop()}", file=sys.stderr)
 
     names = list(table)
-    print("| op | " + " | ".join(names) + " |")
-    print("|---|" + "---:|" * len(names))
-    for op in OPS:
-        best = min(t[op] for t in table.values()) or 0.001
-        cells = [f"{table[n][op]:,.1f} ({table[n][op] / best:.1f}x)" for n in names]
-        print(f"| {op} | " + " | ".join(cells) + " |")
+    op = "echo"
+    best_ms = min(table[n][op] for n in names) or 0.001
+    best_mbps = max(mbps(table[n][op]) for n in names)
+    print("| variant | echo ms | echo MB/s | vs fastest |")
+    print("|---:|---:|---:|---:|")
+    for n in names:
+        ms = table[n][op]
+        rate = mbps(ms)
+        print(
+            f"| {n} | {ms:,.1f} | {rate:,.0f} | "
+            f"{ms / best_ms:.1f}x ms, {rate / best_mbps:.2f}x MB/s |"
+        )
 
 
-main()
+if __name__ == "__main__":
+    main()

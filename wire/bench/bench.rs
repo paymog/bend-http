@@ -5,9 +5,10 @@ use std::sync::mpsc;
 use std::thread;
 use std::time::Instant;
 
-const PORT: u16 = 38475;
+const PORT: u16 = 38501;
 const N: usize = 1_048_576;
-const CHK: u32 = 470;
+const R: usize = 64;
+const CHK: u32 = 3187671040;
 
 fn fill(b: &mut [u8]) {
 	for (i, byte) in b.iter_mut().enumerate() {
@@ -15,8 +16,11 @@ fn fill(b: &mut [u8]) {
 	}
 }
 
-fn checksum(b: &[u8]) -> u32 {
-	b[12345] as u32 + b[N - 1] as u32
+fn hash_buf(mut h: u32, b: &[u8]) -> u32 {
+	for &byte in b {
+		h = h.wrapping_mul(31).wrapping_add(u32::from(byte));
+	}
+	h
 }
 
 fn addr() -> SocketAddr {
@@ -30,24 +34,26 @@ fn main() {
 		ready_tx.send(()).unwrap();
 		let (mut conn, _) = ls.accept().unwrap();
 		let mut buf = vec![0u8; N];
-		conn.read_exact(&mut buf).unwrap();
-		conn.write_all(&buf).unwrap();
+		for _ in 0..R {
+			conn.read_exact(&mut buf).unwrap();
+			conn.write_all(&buf).unwrap();
+		}
 	});
 	ready_rx.recv().unwrap();
 
 	let mut buf = vec![0u8; N];
 	fill(&mut buf);
-
 	let mut conn = TcpStream::connect(addr()).unwrap();
+	let mut cs = 0u32;
 
 	let t0 = Instant::now();
-	conn.write_all(&buf).unwrap();
-	println!("send\t{}\t{}", t0.elapsed().as_secs_f64() * 1000.0, CHK);
-
-	let t0 = Instant::now();
-	conn.read_exact(&mut buf).unwrap();
-	let cs = checksum(&buf);
-	println!("recv\t{}\t{}", t0.elapsed().as_secs_f64() * 1000.0, cs);
+	for _ in 0..R {
+		conn.write_all(&buf).unwrap();
+		conn.read_exact(&mut buf).unwrap();
+		cs = hash_buf(cs, &buf);
+	}
+	let ms = t0.elapsed().as_secs_f64() * 1000.0;
+	println!("echo\t{}\t{}", ms, cs);
 
 	th.join().unwrap();
 	if cs != CHK {

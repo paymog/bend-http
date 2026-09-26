@@ -3,9 +3,10 @@ import socket
 import threading
 import time
 
-PORT = 38475
+PORT = 38501
 N = 1_048_576
-CHK = 470
+R = 64
+CHK = 3187671040
 
 
 def fill(b: bytearray) -> None:
@@ -13,8 +14,10 @@ def fill(b: bytearray) -> None:
 		b[i] = (i * 31 + 7) & 255
 
 
-def checksum(b: bytes) -> int:
-	return b[12345] + b[N - 1]
+def hash_buf(h: int, b: bytes) -> int:
+	for byte in b:
+		h = (h * 31 + byte) & 0xFFFFFFFF
+	return h
 
 
 def server(ready: threading.Event) -> None:
@@ -25,15 +28,16 @@ def server(ready: threading.Event) -> None:
 	ready.set()
 	conn, _ = ls.accept()
 	with conn:
-		data = bytearray(N)
-		view = memoryview(data)
-		off = 0
-		while off < N:
-			n = conn.recv_into(view[off:], N - off)
-			if n == 0:
-				raise SystemExit("short read")
-			off += n
-		conn.sendall(data)
+		for _ in range(R):
+			data = bytearray(N)
+			view = memoryview(data)
+			off = 0
+			while off < N:
+				n = conn.recv_into(view[off:], N - off)
+				if n == 0:
+					raise SystemExit("short read")
+				off += n
+			conn.sendall(data)
 	ls.close()
 
 
@@ -46,25 +50,25 @@ def main() -> None:
 
 	buf = bytearray(N)
 	fill(buf)
+	cs = 0
 
 	with socket.create_connection(("127.0.0.1", PORT)) as conn:
 		t0 = time.perf_counter()
-		conn.sendall(buf)
-		print(f"send\t{(time.perf_counter() - t0) * 1000:.3f}\t{CHK}")
+		for _ in range(R):
+			conn.sendall(buf)
+			got = bytearray(N)
+			view = memoryview(got)
+			off = 0
+			while off < N:
+				n = conn.recv_into(view[off:], N - off)
+				if n == 0:
+					raise SystemExit("short read")
+				off += n
+			cs = hash_buf(cs, got)
+		ms = (time.perf_counter() - t0) * 1000
+		print(f"echo\t{ms:.3f}\t{cs}")
 
-		t0 = time.perf_counter()
-		got = bytearray(N)
-		view = memoryview(got)
-		off = 0
-		while off < N:
-			n = conn.recv_into(view[off:], N - off)
-			if n == 0:
-				raise SystemExit("short read")
-			off += n
-		cs = checksum(got)
-		print(f"recv\t{(time.perf_counter() - t0) * 1000:.3f}\t{cs}")
-
-	th.join(timeout=5)
+	th.join(timeout=30)
 	if cs != CHK:
 		raise SystemExit(2)
 

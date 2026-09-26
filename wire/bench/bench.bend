@@ -1,12 +1,19 @@
-# Wire benchmark: one localhost TCP echo with send.words and recv.words (see README.md).
+# Wire benchmark: R localhost TCP echo round trips with send.words and recv.words (see README.md).
 import Base
 import ../wire.bend as Wire
+import ../../bytes/bytes.bend as Bytes
 
 def port() -> U32:
-  38475
+  38501
 
 def len() -> U32:
   1048576
+
+def rounds() -> Nat:
+  64n
+
+def recv.ms() -> U32:
+  120000
 
 def b8(+x: U32) -> U32:
   (x .&. 255 : U32)
@@ -22,47 +29,60 @@ def fill(n: Nat, a: Array<U32>, +j: U32) -> Array<U32>:
       fill(p, Array.set(U32, a, j, packw((j * 124 + 7 : U32))), (j + 1 : U32))
 
 def buf() -> Array<U32>:
-  fill(264704n, Array.new(U32, 18n, 0), 0)
+  fill(262144n, Array.new(U32, 18n, 0), 0)
 
-def byte.of(+sh: U32, r: Array<U32> & U32) -> Array<U32> & U32:
-  (b, w) = r
-  (b, b8(U32.shrn(w, U32.to_nat(sh))))
+def mix(+h: U32, +b: U32) -> U32:
+  ((h * 31 : U32) + b : U32)
 
-def byte(a: Array<U32>, +i: U32) -> Array<U32> & U32:
-  byte.of(((i .&. 3 : U32) * 8 : U32), Array.get(U32, a, (i >> 2n : U32)))
-
-def chk() -> U32:
-  470
+def hash.str(s: String, +h: U32) -> U32:
+  match s:
+    case SNil{}:
+      h
+    case SCon{Chr{+c}, t}:
+      hash.str(t, mix(h, b8(c)))
 
 def lap(+name: String, t0: Nat, t1: Nat, +cs: U32) -> IO(Unit):
   IO.print(name ++ "\t" ++ Nat.show((t1 - t0 : Nat)) ++ "\t" ++ U32.show(cs))
 
-def echo.sent(ms: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Unit):
-  (_, r) = ms
+def echo.after.send(ms: Socket & Result<&1, &1, U32 & String, Unit>) -> IO(Socket):
+  (sock, r) = ms
   match r:
     case Fail{e}:
-      IO.print("server send failed")
+      do IO<Socket>:
+        IO.print("server send failed")
+        IO.pure(Socket, sock)
     case Done{u}:
-      IO.sleep(0)
+      IO.pure(Socket, sock)
 
-def echo.got(sock2: Socket, pair: U32 & Array<U32>) -> IO(Unit):
+def echo.got(sock2: Socket, pair: U32 & Array<U32>) -> IO(Socket):
   (ln, words) = pair
-  do IO<Unit>:
+  do IO<Socket>:
     ms : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send.words(sock2, ln, words)
-    echo.sent(ms)
+    echo.after.send(ms)
 
-def echo.done(mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> IO(Unit):
+def echo.done(mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>) -> IO(Socket):
   (sock2, r) = mr
   match r:
     case Fail{e}:
-      IO.print("server recv failed")
+      do IO<Socket>:
+        IO.print("server recv failed")
+        IO.pure(Socket, sock2)
     case Done{pair}:
       echo.got(sock2, pair)
 
-def echo(sock: Socket) -> IO(Unit):
-  do IO<Unit>:
-    mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), 30000)
+def echo.one(sock: Socket) -> IO(Socket):
+  do IO<Socket>:
+    mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), recv.ms())
     echo.done(mr)
+
+def echo.loop(n: Nat, sock: Socket) -> IO(Unit):
+  match n:
+    case 0n:
+      Socket.close(sock)
+    case 1n+p:
+      do IO<Unit>:
+        sock2 : Socket <- echo.one(sock)
+        echo.loop(p, sock2)
 
 def server.accept(mr: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Unit):
   (_, r) = mr
@@ -70,7 +90,7 @@ def server.accept(mr: Listener & Result<&1, &1, U32 & String, Socket>) -> IO(Uni
     case Fail{e}:
       IO.print("accept failed")
     case Done{sock}:
-      echo(sock)
+      echo.loop(rounds(), sock)
 
 def server.listen(l: Listener) -> IO(Unit):
   do IO<Unit>:
@@ -89,57 +109,52 @@ def server() -> IO(Unit):
     lr : Result<&1, &1, U32 & String, Listener> <- TCP.listen(port())
     server.lr(lr)
 
-def client.recv.lap(t0: Nat, t1: Nat, +cs: U32) -> IO(Unit):
-  lap("recv", t0, t1, cs)
+@unsafe
+def client.round.got(t0: Nat, +n: Nat, sock: Socket, pair: U32 & Array<U32>, +h: U32, +send: Array<U32>) -> IO(Unit):
+  (ln, words) = pair
+  client.round.go(t0, n, sock, send, hash.str(Bytes.to_string(Bytes.Bytes{ln, words}), h))
 
-def client.recv.got(t0: Nat, pair: U32 & Array<U32>) -> IO(Unit):
-  do IO<Unit>:
-    t1 : Nat <- IO.now()
-    client.recv.lap(t0, t1, chk())
-
-def client.recv.done(t0: Nat, mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>, +exp: U32) -> IO(Unit):
-  (_, r) = mr
+@unsafe
+def client.round.recv(t0: Nat, n: Nat, mr: Socket & Result<&1, &1, U32 & String, U32 & Array<U32>>, +h: U32, +send: Array<U32>) -> IO(Unit):
+  (sock, r) = mr
   match r:
     case Fail{e}:
       IO.print("recv failed")
     case Done{pair}:
-      client.recv.got(t0, pair)
+      client.round.got(t0, n, sock, pair, h, send)
 
-def client.recv.go(sock: Socket, +exp: U32) -> IO(Unit):
-  do IO<Unit>:
-    t0 : Nat <- IO.now()
-    mr : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), 30000)
-    client.recv.done(t0, mr, exp)
-
-def client.send.lap(t0: Nat, t1: Nat, +cs: U32) -> IO(Unit):
-  lap("send", t0, t1, cs)
-
-def client.send.done(t0: Nat, mr: Socket & Result<&1, &1, U32 & String, Unit>, +cs: U32) -> IO(Unit):
+@unsafe
+def client.round.sent(t0: Nat, n: Nat, mr: Socket & Result<&1, &1, U32 & String, Unit>, +h: U32, +send: Array<U32>) -> IO(Unit):
   (sock, r) = mr
   match r:
     case Fail{e}:
       IO.print("send failed")
     case Done{u}:
       do IO<Unit>:
+        mr2 : Socket & Result<&1, &1, U32 & String, U32 & Array<U32>> <- Wire.recv.words(sock, len(), recv.ms())
+        client.round.recv(t0, n, mr2, h, send)
+
+@unsafe
+def client.round.go(t0: Nat, n: Nat, sock: Socket, +send: Array<U32>, +h: U32) -> IO(Unit):
+  match n:
+    case 0n:
+      do IO<Unit>:
         t1 : Nat <- IO.now()
-        client.send.lap(t0, t1, cs)
-        client.recv.go(sock, cs)
+        lap("echo", t0, t1, h)
+    case 1n+p:
+      do IO<Unit>:
+        mr : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send.words(sock, len(), send)
+        client.round.sent(t0, p, mr, h, send)
 
-def client.send.go(t0: Nat, sock: Socket, words: Array<U32>, +cs: U32) -> IO(Unit):
-  do IO<Unit>:
-    mr : Socket & Result<&1, &1, U32 & String, Unit> <- Wire.send.words(sock, len(), words)
-    client.send.done(t0, mr, cs)
-
-def client.prep(sock: Socket, words: Array<U32>, +cs: U32) -> IO(Unit):
+def client.echo(sock: Socket, words: Array<U32>) -> IO(Unit):
   do IO<Unit>:
     t0 : Nat <- IO.now()
-    client.send.go(t0, sock, words, cs)
-
-def client.ready(sock: Socket, words: Array<U32>) -> IO(Unit):
-  client.prep(sock, words, chk())
+    client.round.go(t0, rounds(), sock, words, 0)
 
 def client.connected(sock: Socket) -> IO(Unit):
-  client.ready(sock, buf())
+  do IO<Unit>:
+    words : Array<U32> = buf()
+    client.echo(sock, words)
 
 def client.cr(cr: Result<&1, &1, U32 & String, Socket>) -> IO(Unit):
   match cr:
@@ -156,6 +171,6 @@ def client.go() -> IO(Unit):
 def main() -> IO(Unit):
   do IO<Unit>:
     chan : Chan(Unit) <- IO.fork(Unit, server())
-    _ : Unit <- IO.sleep(200)
+    _ : Unit <- IO.sleep(500)
     u : Unit <- client.go()
     IO.join(Unit, chan)
