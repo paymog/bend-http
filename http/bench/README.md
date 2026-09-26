@@ -28,14 +28,14 @@ The parse checksum sums, over every message, the method and target lengths (for 
 
 ### Results
 
-M4 Pro, macOS 26.6.2, 2026-09-25. Median of five runs. Times are in ms for 20,000 messages; `Nx` is the multiple of the fastest variant for that op.
+M4 Pro, macOS 26.6.2, 2026-09-26. Median of five runs. Times are in ms for 20,000 messages; `Nx` is the multiple of the fastest variant for that op.
 
 | op | C | Rust | Bun | Node | Python | Bend |
 |---|---:|---:|---:|---:|---:|---:|
-| parse_req | 4.0 (2.2x) | 1.8 (1.0x) | 16.8 (9.3x) | 19.9 (11.1x) | 443.9 (246.6x) | 876.0 (486.7x) |
-| parse_res | 2.5 (1.7x) | 1.5 (1.0x) | 12.4 (8.3x) | 15.1 (10.1x) | 315.3 (210.2x) | 2,234.0 (1489.3x) |
-| encode_req | n/a | n/a | n/a | n/a | 317.4 (1.7x) | 183.0 (1.0x) |
-| encode_res | n/a | n/a | n/a | n/a | 273.2 (2.1x) | 128.0 (1.0x) |
+| parse_req | 3.5 (1.9x) | 1.8 (1.0x) | 16.3 (9.1x) | 20.0 (11.1x) | 440.4 (244.7x) | 865.0 (480.6x) |
+| parse_res | 2.2 (1.4x) | 1.6 (1.0x) | 12.0 (7.5x) | 15.2 (9.5x) | 311.2 (194.5x) | 661.0 (413.1x) |
+| encode_req | n/a | n/a | n/a | n/a | 311.8 (1.7x) | 180.0 (1.0x) |
+| encode_res | n/a | n/a | n/a | n/a | 267.4 (2.1x) | 126.0 (1.0x) |
 
 Versions: Bend 2.0.28, Apple clang 17.0.0 with llhttp 9.4.2, rustc 1.91.0 with httparse 1.10.1, Bun 1.3.14, Node 24.0.1, Python 3.14.6 with h11 0.16.0.
 
