@@ -1,0 +1,15 @@
+[package]
+name = "url-bench"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "rs"
+path = "main.rs"
+
+[dependencies]
+percent-encoding = "2"
+
+[profile.release]
+opt-level = 3
