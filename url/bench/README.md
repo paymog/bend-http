@@ -1,6 +1,6 @@
 # URL benchmark
 
-This times `Url.parse` and `Url.encode` on one fixed origin-form path list, in Bend and in C, Rust, JavaScript (Bun and Node), and Python.
+This times `Url.parse` and `Url.encode` on one fixed origin-form path list, in Bend and in Rust, JavaScript (Bun and Node), and Python.
 
 ## Run
 
@@ -9,7 +9,7 @@ python3 run.py      # 3 runs per variant, median
 python3 run.py 5    # 5 runs
 ```
 
-You need `bend`, `clang`, `cargo`, `bun`, `node`, and `python3`. Cargo fetches `percent-encoding` on the first run. Binaries go to `out/`, which git ignores. The run takes about 10 seconds. It exits non-zero if a build fails, or if two languages print different checksums for one op.
+You need `bend`, `cargo`, `bun`, `node`, and `python3`. Cargo fetches `url` and `percent-encoding` on the first run. Binaries go to `out/`, which git ignores. The run takes about 10 seconds. It exits non-zero if a build fails, or if two languages print different checksums for one op.
 
 ## Input
 
@@ -42,23 +42,22 @@ Query parsing does not treat `+` as space (RFC 3986 query, not form-urlencoded).
 
 M4 Pro, macOS 26.6.2, 2026-09-25. Median of five runs. Times are in ms for 10,000 rounds; `Nx` is the multiple of the fastest variant for that op.
 
-| op | C | Rust | Bun | Node | Python | Bend |
-|---|---:|---:|---:|---:|---:|---:|
-| parse | 13.4 (1.0x) | 12.9 (1.0x) | 31.6 (2.4x) | 32.4 (2.5x) | 125.8 (9.7x) | 51.0 (3.9x) |
-| encode | 14.5 (1.4x) | 10.3 (1.0x) | 51.7 (5.0x) | 68.5 (6.6x) | 284.5 (27.6x) | 84.0 (8.1x) |
+| op | Rust | Bun | Node | Python | Bend |
+|---|---:|---:|---:|---:|---:|
+| parse | 40.3 (1.3x) | 30.1 (1.0x) | 32.3 (1.1x) | 125.2 (4.2x) | 51.0 (1.7x) |
+| encode | 10.8 (1.0x) | 51.1 (4.7x) | 67.4 (6.3x) | 284.6 (26.4x) | 84.0 (7.8x) |
 
-Versions: Bend 2.0.28, Apple clang 17.0.0, rustc 1.91.0 with percent-encoding 2.3.2, Bun 1.3.14, Node 24.0.1, Python 3.14.6.
+Versions: Bend 2.0.28, rustc 1.91.0 with url 2.5.8 and percent-encoding 2.3.2, Bun 1.3.14, Node 24.0.1, Python 3.14.6.
 
 ## The calls
 
 | language | parse | encode |
 |---|---|---|
 | Bend | `Url.parse` | `Url.encode` |
-| C | split on `?` and `&`, RFC 3986 percent decode | percent encode path and sorted query |
-| Rust | manual split, `percent-encoding` decode | `percent-encoding` encode, sorted query keys |
+| Rust | `Url::parse("http://x").join(origin)`, `path()` percent-decoded, query split by hand | `percent-encoding`, sorted query keys |
 | JavaScript | split on `?` and `&`, `decodeURIComponent` | `encodeURIComponent`, sorted query keys |
 | Python | `urlsplit`, `unquote`, manual query split | `quote` and `urlencode` with `quote_via=quote`, sorted keys |
 
-C has no standard URL parser for origin-form paths. The C variant uses the same split-and-percent-encode shape as the other glue code, not a second full `url` implementation.
+C is left out. The C standard library has no URL parser for origin-form paths, and adding one would reimplement the Bend package.
 
-Go is left out. Its standard library parses URLs but has no API that matches Bend's origin-form-only `Url` type without pulling in a third-party crate.
+Rust uses the `url` crate to resolve origin-form paths against a fixed base. `query_pairs` applies form-urlencoded rules (`+` as space), which disagrees with Bend, so the query string from `Url::query()` is split and percent-decoded by hand. `Url::path()` is percent-decoded the same way for the path checksum.

@@ -10,7 +10,6 @@ OPS = ["parse", "encode"]
 ENV = {**os.environ, "BEND_NO_TELEMETRY": "1", "NODE_NO_WARNINGS": "1"}
 
 VARIANTS = {
-    "C": (["clang", "-O2", "-o", OUT / "c", "bench.c"], [OUT / "c"]),
     "Rust": (
         ["cargo", "build", "-q", "--release", "--manifest-path", "rs/Cargo.toml", "--target-dir", OUT / "cargo"],
         [OUT / "cargo" / "release" / "rs"],

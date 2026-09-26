@@ -1,8 +1,10 @@
-// URL benchmark in Rust with percent_encoding from the url crate (see ../README.md).
+// URL benchmark in Rust with the url crate (see ../README.md).
 use std::time::Instant;
 use percent_encoding::{utf8_percent_encode, AsciiSet, NON_ALPHANUMERIC};
+use url::Url;
 
 const ROUNDS: u32 = 10000;
+const BASE: &str = "http://x";
 const URLS: &[&str] = &[
     "/",
     "/health",
@@ -41,22 +43,23 @@ const QUERY_SET: &AsciiSet = &NON_ALPHANUMERIC
     .remove(b'_')
     .remove(b'~');
 
-fn dec_pair(part: &str) -> (String, String) {
-    if let Some((k, v)) = part.split_once('=') {
-        (percent_decode(k), percent_decode(v))
-    } else {
-        (percent_decode(part), String::new())
+fn hex(c: u8) -> Option<u8> {
+    match c {
+        b'0'..=b'9' => Some(c - b'0'),
+        b'a'..=b'f' => Some(c - b'a' + 10),
+        b'A'..=b'F' => Some(c - b'A' + 10),
+        _ => None,
     }
 }
 
-fn percent_decode(s: &str) -> String {
-    let mut out = String::new();
+fn pct_decode(s: &str) -> String {
     let b = s.as_bytes();
+    let mut out = String::with_capacity(s.len());
     let mut i = 0;
     while i < b.len() {
         if b[i] == b'%' && i + 2 < b.len() {
-            if let Ok(v) = u8::from_str_radix(std::str::from_utf8(&b[i + 1..i + 3]).unwrap_or(""), 16) {
-                out.push(v as char);
+            if let (Some(hi), Some(lo)) = (hex(b[i + 1]), hex(b[i + 2])) {
+                out.push((hi * 16 + lo) as char);
                 i += 3;
                 continue;
             }
@@ -67,13 +70,18 @@ fn percent_decode(s: &str) -> String {
     out
 }
 
+// Bend query parsing is RFC 3986 percent-decode only; '+' is not space.
 fn parse_query(qs: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
     for part in qs.split('&') {
         if part.is_empty() {
             continue;
         }
-        out.push(dec_pair(part));
+        let (k, v) = match part.split_once('=') {
+            Some((k, v)) => (k, v),
+            None => (part, ""),
+        };
+        out.push((pct_decode(k), pct_decode(v)));
     }
     out.sort_by(|a, b| a.0.cmp(&b.0));
     out
@@ -83,11 +91,12 @@ fn parse_origin(s: &str) -> Option<Sample> {
     if !s.starts_with('/') {
         return None;
     }
-    let (path_raw, qs) = s.split_once('?').map(|(p, q)| (p, q)).unwrap_or((s, ""));
-    Some(Sample {
-        path: percent_decode(path_raw),
-        q: parse_query(qs),
-    })
+    let u = Url::parse(BASE).ok()?.join(s).ok()?;
+    // url.path() keeps percent-encoding; Bend decodes the path (see url.bend parse.path).
+    let path = pct_decode(u.path());
+    // query_pairs treats '+' as space; Bend does not (RFC 3986 query).
+    let q = parse_query(u.query().unwrap_or(""));
+    Some(Sample { path, q })
 }
 
 fn enc_path(path: &str) -> String {
