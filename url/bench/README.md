@@ -9,7 +9,7 @@ python3 run.py      # 3 runs per variant, median
 python3 run.py 5    # 5 runs
 ```
 
-You need `bend`, `clang`, `cargo`, `bun`, `node`, and `python3`. Cargo fetches `url` and `percent-encoding` on the first run. Binaries go to `out/`, which git ignores. The run takes about 10 seconds. It exits non-zero if a build fails, or if two languages print different checksums for one op.
+You need `bend`, `clang`, `cargo`, `bun`, `node`, and `python3`. Cargo fetches `percent-encoding` on the first run. Binaries go to `out/`, which git ignores. The run takes about 10 seconds. It exits non-zero if a build fails, or if two languages print different checksums for one op.
 
 ## Input
 
@@ -47,7 +47,7 @@ M4 Pro, macOS 26.6.2, 2026-09-25. Median of five runs. Times are in ms for 10,00
 | parse | 13.4 (1.0x) | 12.9 (1.0x) | 31.6 (2.4x) | 32.4 (2.5x) | 125.8 (9.7x) | 51.0 (3.9x) |
 | encode | 14.5 (1.4x) | 10.3 (1.0x) | 51.7 (5.0x) | 68.5 (6.6x) | 284.5 (27.6x) | 84.0 (8.1x) |
 
-Versions: Bend 2.0.28, Apple clang 17.0.0, rustc 1.91.0 with url 2.5.8 and percent-encoding 2.3.2, Bun 1.3.14, Node 24.0.1, Python 3.14.6.
+Versions: Bend 2.0.28, Apple clang 17.0.0, rustc 1.91.0 with percent-encoding 2.3.2, Bun 1.3.14, Node 24.0.1, Python 3.14.6.
 
 ## The calls
 
