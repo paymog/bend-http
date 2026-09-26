@@ -49,7 +49,7 @@ A law is a claim; a proof is a def with the same name. Each package has:
 - `bend file.bend` runs through the checker's runner and overflows on strings over about 30 KB. Build big-body programs natively: `bend file.bend -o app`.
 - The hub shows the first comment line of a package's entry file as its description. Keep it one accurate line. It links to `tree/main/<pkg>`, and a publish is permanent, so do not rename or move a published package's folder.
 - Each package is a root folder `<pkg>/` with entry file `<pkg>/<pkg>.bend`, `LAWS.bend`, `PROOF.bend`, and optional `check.bend` and `effs/`, plus `bench/`. `scripts/packages.sh` finds packages by that entry file, so a new package needs no CI change. `scripts/check.sh [pkg...]` runs what CI runs: `--check-only` on the entry file, then `PROOF.bend` and `check.bend` in the folder. CI checks only the packages a PR changes. `http/smoke.bend` does live fetches. Run `bend <file> --check-only` for a fast type check. Run `bench/` by hand. `scripts/check.sh` stays the type and proof gate.
-- `bench/` times that package's hot path on one fixed input, and runs the same work in C, Rust, Python, and JavaScript. Use each language's standard library only, and the obvious loop rather than hand-written SIMD. `bench/README.md` records the command, the input, and the times. A package is not done until that bench runs and the checksums agree.
+- `bench/` times that package's hot path on one fixed input, and runs the same work in C, Rust, Python, and JavaScript. Use each language's standard library or one very popular library, and the obvious loop rather than hand-written SIMD. `bench/README.md` records the command, the input, and the times. A package is not done until that bench runs and the checksums agree.
 - Packages publish to the Bend hub as `bend-kit-<package>@<version>`, with the version in `<pkg>/VERSION`. CI publishes on merge to `main` with `scripts/publish.sh`. Do not publish by hand. The hub rejects a republish, so a change to `<pkg>.bend` or `effs/` must raise `VERSION`; `scripts/publish.sh --check` fails a PR that does not. Names are 12 to 64 characters of `a-z`, `0-9`, and `-`, and versions have four numbers. A publish is permanent, and a breaking change needs a new version.
 - `http` and `dns` import their siblings from the hub (by name, or by hash until the hub names them), not by relative path, so their types match the ones callers import. A change to `bytes`, `url`, `json`, `encoding`, `wire`, or `zlib` reaches `http` only after you publish that package and raise the version in the import. Publish dependencies first. Package-local `LAWS.bend` and `check.bend` import the local file.
 - The hub registers at most five new names per account per day. `bend link <name>@<version> 0x<hash>` names a package that is already published.
@@ -58,8 +58,8 @@ A law is a claim; a proof is a def with the same name. Each package has:
 
 A package's `bench/` times its hot path on one fixed input, in Bend and in C, Rust, Python, and JavaScript.
 
-- Compare against each language's standard library only. When a language's standard library has no equivalent, leave that language out and say so in the README.
-- Do not reimplement the package in another language, and do not add a third-party dependency.
+- Compare against each language's standard library, or against a very popular library when the standard library has no equivalent (`httparse` in Rust, `llhttp` in C, `h11` in Python). When neither gives an easy way to do the work, leave that language out and say so in the README.
+- Do not reimplement the package in another language. Glue, such as slicing a body after a head-only parser, is fine.
 - `bench/README.md` records the command, the input, the language versions, and the times. Every program prints a checksum, and the checksums agree.
 - Run a bench by hand. `scripts/check.sh` and CI do not run it.
 
