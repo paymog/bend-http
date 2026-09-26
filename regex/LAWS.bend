@@ -1,0 +1,193 @@
+import Base
+import ./regex.bend as R
+
+def found(r: Maybe<&2, R.Regex>, s: String) -> Maybe<&2, List<&2, Maybe<&2, R.Span>>>:
+  match r:
+    case None{}:
+      None{}
+    case Some{re}:
+      R.find(re, s)
+
+# Compile pat and find its leftmost match in s.
+def m(+pat: String, s: String) -> Maybe<&2, List<&2, Maybe<&2, R.Span>>>:
+  found(R.compile(pat), s)
+
+def sp(a: U32, b: U32) -> Maybe<&2, R.Span>:
+  Some{R.Span{a, b}}
+
+def ok(+pat: String) -> Bool:
+  Maybe.is_some(&2, R.Regex, R.compile(pat))
+
+def hit(r: Maybe<&2, R.Regex>, s: String) -> Bool:
+  match r:
+    case None{}:
+      False{}
+    case Some{re}:
+      R.is_match(re, s)
+
+# Matches and captures. The expected spans are what Go's regexp (RE2) answers.
+law literal:
+  {m("b", "abc") == Some{[sp(1, 2)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law no_match:
+  {m("x", "abc") == None{} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law empty_pattern:
+  {m("", "abc") == Some{[sp(0, 0)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law leftmost_first:
+  {m("a|ab", "ab") == Some{[sp(0, 1)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law leftmost_start:
+  {m("b+|a", "xab") == Some{[sp(1, 2)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law greedy_star:
+  {m("a*", "aaa") == Some{[sp(0, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law lazy_star:
+  {m("a*?", "aaa") == Some{[sp(0, 0)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law lazy_plus:
+  {m("a+?b", "aaab") == Some{[sp(0, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law quest:
+  {m("colou?r", "color") == Some{[sp(0, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law count_exact:
+  {m("a{3}", "aaaa") == Some{[sp(0, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law count_range:
+  {m("a{2,3}", "aaaa") == Some{[sp(0, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law count_open:
+  {m("a{2,}", "aaaaa") == Some{[sp(0, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law count_lazy:
+  {m("a{2,3}?", "aaaa") == Some{[sp(0, 2)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law brace_literal:
+  {m("a{,2}", "a{,2}") == Some{[sp(0, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law captures:
+  {m("(a+)(b+)", "xaabbby") == Some{[sp(1, 6), sp(1, 3), sp(3, 6)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law capture_unset:
+  {m("(a)|(b)", "b") == Some{[sp(0, 1), None{}, sp(0, 1)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law capture_last_iteration:
+  {m("(a|b)+", "ab") == Some{[sp(0, 2), sp(1, 2)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law capture_nested:
+  {m("((a)b)", "ab") == Some{[sp(0, 2), sp(0, 2), sp(0, 1)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law capture_alternatives:
+  {m("(a|ab)(c|bcd)(d*)", "abcd") == Some{[sp(0, 4), sp(0, 1), sp(1, 4), sp(4, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law noncapturing:
+  {m("(?:ab)+(c)", "ababc") == Some{[sp(0, 5), sp(4, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+# An empty iteration cannot loop: x* runs as (x+)?, as in RE2.
+law empty_loop:
+  {m("(|a)*", "aa") == Some{[sp(0, 0), sp(0, 0)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law anchor_start:
+  {m("^b", "ab") == None{} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law anchor_end:
+  {m("a$", "aba") == Some{[sp(2, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law anchor_text:
+  {m("\\Aab\\z", "abc") == None{} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law word_boundary:
+  {m("\\bcat\\b", "concat cat") == Some{[sp(7, 10)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law not_word_boundary:
+  {m("\\Bcat", "cat concat") == Some{[sp(7, 10)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law dot_no_newline:
+  {m("a.c", "a\nc abc") == Some{[sp(4, 7)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law escape_meta:
+  {m("\\.\\*", "a.*b") == Some{[sp(1, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law class_range:
+  {m("[a-c]+", "xxbcay") == Some{[sp(2, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law class_negated:
+  {m("[^a-c]+", "abxyc") == Some{[sp(2, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law class_bracket_dash:
+  {m("[]a-]+", "x]-a") == Some{[sp(1, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law perl_digit:
+  {m("\\d+", "ab123c") == Some{[sp(2, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law perl_word:
+  {m("\\w+", "  foo_1 ") == Some{[sp(2, 7)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law perl_in_class:
+  {m("[^\\d\\s]+", "1 ab2") == Some{[sp(2, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+# Positions count code points: "é" is one.
+law unicode_letter:
+  {m("\\p{L}+", "12héllo!") == Some{[sp(2, 7)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law unicode_short:
+  {m("\\pN", "x\u{663}") == Some{[sp(1, 2)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law unicode_negated:
+  {m("\\P{L}+", "ab12cd") == Some{[sp(2, 4)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law unicode_in_class:
+  {m("[\\p{Lu}\\d]+", "abC1Dx") == Some{[sp(2, 5)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+# A backtracker takes exponential time here; the Pike VM steps each char once.
+law pathological:
+  {m("(a*)*b", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") == None{} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law pathological_hit:
+  {m("(a*)*b", "aaab") == Some{[sp(0, 4), sp(0, 3)]} : Maybe<&2, List<&2, Maybe<&2, R.Span>>>}
+
+law is_match_hit:
+  {hit(R.compile("b+"), "abbc") == True{} : Bool}
+
+law is_match_miss:
+  {hit(R.compile("^b+"), "abbc") == False{} : Bool}
+
+# Syntax errors.
+law bad_unclosed:
+  {ok("(a") == False{} : Bool}
+
+law bad_close:
+  {ok("a)") == False{} : Bool}
+
+law bad_repeat_nothing:
+  {ok("*a") == False{} : Bool}
+
+law bad_repeat_repeat:
+  {ok("a**") == False{} : Bool}
+
+law bad_class:
+  {ok("[a") == False{} : Bool}
+
+law bad_range:
+  {ok("[z-a]") == False{} : Bool}
+
+law bad_escape:
+  {ok("\\q") == False{} : Bool}
+
+law bad_trailing_escape:
+  {ok("a\\") == False{} : Bool}
+
+law bad_property:
+  {ok("\\p{Xx}") == False{} : Bool}
+
+law bad_count:
+  {ok("a{1001}") == False{} : Bool}
+
+law bad_count_order:
+  {ok("a{3,2}") == False{} : Bool}
+
+law bad_flags:
+  {ok("(?i)a") == False{} : Bool}
