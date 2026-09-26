@@ -1,7 +1,7 @@
 # DNS codec and host lookup. Source: https://github.com/paymog/bend-kit/tree/main/dns
 import Base
-# bend-kit-wire@0.4.0.2
-import 0xb481bb64f1136053b0a6b2c6da6277ab/wire.bend as Wire
+# bend-kit-wire@0.4.0.3
+import 0x096635686408886b7d907f16c4550317/wire.bend as Wire
 
 # query, answer, and resolve.pure are pure; PROOF.bend covers them, not effs/.
 # resolve uses the OS resolver (IPv4 A only, same Maybe<String> as before).
