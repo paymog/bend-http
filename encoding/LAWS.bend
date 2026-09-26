@@ -1,53 +1,51 @@
 import Base
-import ./encoding.bend as Hex
+import 0x49814d83de8f70993a43e1002be29ecd/bytes.bend as Bytes
+import ./encoding.bend as Enc
 
-law encode_empty:
-  {Hex.encode("") == "" : String}
-
-law decode_empty:
-  {Hex.decode("") == Some{""} : Maybe<&2, String>}
-
-law decode_odd:
-  {Hex.decode("a") == None{} : Maybe<&2, String>}
-
-def bytes(xs: List<&2, U32>) -> String:
+def octets(xs: List<&2, U32>) -> String:
   match xs:
     case Nil{}:
       SNil{}
     case Con{h, t}:
-      SCon{Chr{h}, bytes(t)}
+      SCon{Chr{h}, octets(t)}
+
+law utf8_empty:
+  {Bytes.to_string(Enc.utf8.encode("")) == "" : String}
+
+law utf8_decode_empty:
+  {Enc.utf8.decode(Bytes.new(0)) == "" : String}
 
 # RFC 3629 §3: ASCII is one octet, unchanged.
 law utf8_ascii:
-  {Hex.utf8.encode("GET /") == "GET /" : String}
+  {Bytes.to_string(Enc.utf8.encode("GET /")) == "GET /" : String}
 
 # RFC 3629 §3: one example per sequence length.
 law utf8_two:
-  {Hex.utf8.encode("é") == bytes([195, 169]) : String}
+  {Bytes.to_string(Enc.utf8.encode("é")) == octets([195, 169]) : String}
 
 law utf8_three:
-  {Hex.utf8.encode("€") == bytes([226, 130, 172]) : String}
+  {Bytes.to_string(Enc.utf8.encode("€")) == octets([226, 130, 172]) : String}
 
 law utf8_four:
-  {Hex.utf8.encode("😀") == bytes([240, 159, 152, 128]) : String}
+  {Bytes.to_string(Enc.utf8.encode("😀")) == octets([240, 159, 152, 128]) : String}
 
 law utf8_roundtrip:
-  {Hex.utf8.decode(Hex.utf8.encode("aé€😀z")) == "aé€😀z" : String}
+  {Enc.utf8.decode(Enc.utf8.encode("aé€😀z")) == "aé€😀z" : String}
 
 # WHATWG: bytes that cannot start a sequence decode to U+FFFD.
 law utf8_bad_lead:
-  {Hex.utf8.decode(bytes([255, 65])) == "\u{FFFD}A" : String}
+  {Enc.utf8.decode(Bytes.from_string(octets([255, 65]))) == "\u{FFFD}A" : String}
 
 # WHATWG: a broken sequence yields one U+FFFD and the breaking byte is read again.
 law utf8_reprocess:
-  {Hex.utf8.decode(bytes([195, 65])) == "\u{FFFD}A" : String}
+  {Enc.utf8.decode(Bytes.from_string(octets([195, 65]))) == "\u{FFFD}A" : String}
 
 law utf8_truncated:
-  {Hex.utf8.decode(bytes([226, 130])) == "\u{FFFD}" : String}
+  {Enc.utf8.decode(Bytes.from_string(octets([226, 130]))) == "\u{FFFD}" : String}
 
 # RFC 3629 §3: overlong forms and surrogates are not UTF-8.
 law utf8_overlong:
-  {Hex.utf8.decode(bytes([192, 128])) == "\u{FFFD}\u{FFFD}" : String}
+  {Enc.utf8.decode(Bytes.from_string(octets([192, 128]))) == "\u{FFFD}\u{FFFD}" : String}
 
 law utf8_surrogate:
-  {Hex.utf8.decode(bytes([237, 160, 128])) == "\u{FFFD}\u{FFFD}\u{FFFD}" : String}
+  {Enc.utf8.decode(Bytes.from_string(octets([237, 160, 128]))) == "\u{FFFD}\u{FFFD}\u{FFFD}" : String}

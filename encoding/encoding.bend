@@ -1,127 +1,73 @@
-# UTF-8 and hex encoding for byte strings. Source: https://github.com/paymog/bend-kit/tree/main/encoding
+# UTF-8 encoding and decoding between text and Bytes. Source: https://github.com/paymog/bend-kit/tree/main/encoding
 import Base
+import 0x49814d83de8f70993a43e1002be29ecd/bytes.bend as Bytes
 
-# Hex of each char as two nibbles. ASCII-oriented.
+# UTF-8 (RFC 3629). Text is a String of code points; octets are Bytes.
+# Hex lives in Bytes: Bytes.to_hex and Bytes.from_hex.
 
-def nibble(+n: U32) -> U32:
-  Bool.pick(U32, U32.is_le(n, 9), (48 + n : U32), (87 + n : U32))
+# Octets being written: the buffer, the count so far, and the word being filled.
+type Out is Type:
+  Out{buf: Array<U32>, n: U32, w: U32}
 
-@unsafe
-def hi.go(+n: U32, +acc: U32, small: Bool) -> U32:
-  match small:
-    case True{}:
-      acc
-    case False{}:
-      hi.go((n - 16 : U32), (acc + 1 : U32), U32.is_le((n - 16 : U32), 15))
+# Bytes enter at the top of w, as in Bytes.from_string; every fourth byte stores the word.
+def put(o: Out, +b: U32) -> Out:
+  Out{buf, +n, +w} = o
+  +w2 = ((w >> 8n) .|. (b << 24n) : U32)
+  +full = U32.is_eq((n .&. 3 : U32), 3)
+  Out{Bytes.flush(full, buf, (n >> 2n : U32), w2), (n + 1 : U32), Bool.pick(U32, full, 0, w2)}
 
-def hi(+n: U32) -> U32:
-  hi.go(n, 0, U32.is_le(n, 15))
+def done(o: Out) -> Bytes.Bytes:
+  Out{buf, +n, +w} = o
+  +r = (n .&. 3 : U32)
+  Bytes.Bytes{n, Bytes.flush(U32.is_ne(r, 0), buf, (n >> 2n : U32), U32.shrn(w, U32.to_nat((((4 - r) .&. 3) * 8 : U32))))}
 
-def lo(+n: U32) -> U32:
-  (n - (hi(n) * 16 : U32) : U32)
+def utf8.width(+c: U32) -> U32:
+  Bool.pick(U32, U32.is_lt(c, 128), 1, Bool.pick(U32, U32.is_lt(c, 2048), 2, Bool.pick(U32, U32.is_lt(c, 65536), 3, 4)))
 
-def encode.go(s: String, acc: String) -> String:
+def utf8.size(s: String, +n: U32) -> U32:
   match s:
     case SNil{}:
-      String.reverse(acc)
+      n
     case SCon{Chr{+c}, t}:
-      encode.go(t, SCon{Chr{nibble(lo(c))}, SCon{Chr{nibble(hi(c))}, acc}})
-
-def encode(s: String) -> String:
-  encode.go(s, SNil{})
-
-def unhex.h(c: U32, hex: Bool) -> Maybe<&2, U32>:
-  match hex:
-    case True{}:
-      Some{(c - 87 : U32)}
-    case False{}:
-      None{}
-
-def unhex.d(+c: U32, dec: Bool, hex: Bool) -> Maybe<&2, U32>:
-  match dec:
-    case True{}:
-      Some{(c - 48 : U32)}
-    case False{}:
-      unhex.h(c, hex)
-
-def unhex(+c: U32) -> Maybe<&2, U32>:
-  unhex.d(c, Bool.and(U32.is_le(48, c), U32.is_le(c, 57)), Bool.and(U32.is_le(97, c), U32.is_le(c, 102)))
-
-def decode.cons(byte: U32, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match rest:
-    case None{}:
-      None{}
-    case Some{s}:
-      Some{SCon{Chr{byte}, s}}
-
-def decode.join2(x: U32, b: Maybe<&2, U32>, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match b:
-    case None{}:
-      None{}
-    case Some{y}:
-      decode.cons((x * 16 + y : U32), rest)
-
-def decode.join(a: Maybe<&2, U32>, b: Maybe<&2, U32>, rest: Maybe<&2, String>) -> Maybe<&2, String>:
-  match a:
-    case None{}:
-      None{}
-    case Some{x}:
-      decode.join2(x, b, rest)
-
-@unsafe
-def decode.go(s: String) -> Maybe<&2, String>:
-  match s:
-    case SNil{}:
-      Some{SNil{}}
-    case SCon{Chr{+c}, t}:
-      match t:
-        case SNil{}:
-          None{}
-        case SCon{Chr{+d}, r}:
-          decode.join(unhex(c), unhex(d), decode.go(r))
-
-def decode(s: String) -> Maybe<&2, String>:
-  decode.go(s)
-
-# UTF-8 (RFC 3629). Byte strings hold one Char per octet (0..255).
+      utf8.size(t, (n + utf8.width(c) : U32))
 
 def utf8.cont(c: U32, n: Nat) -> U32:
   (128 + U32.and(U32.shrn(c, n), 63) : U32)
 
-def utf8.push4(+c: U32, acc: String) -> String:
-  SCon{Chr{utf8.cont(c, 0n)}, SCon{Chr{utf8.cont(c, 6n)}, SCon{Chr{utf8.cont(c, 12n)}, SCon{Chr{(240 + U32.shrn(c, 18n) : U32)}, acc}}}}
+def utf8.push4(+c: U32, o: Out) -> Out:
+  put(put(put(put(o, (240 + U32.shrn(c, 18n) : U32)), utf8.cont(c, 12n)), utf8.cont(c, 6n)), utf8.cont(c, 0n))
 
-def utf8.push3(+c: U32, acc: String, small: Bool) -> String:
+def utf8.push3(+c: U32, o: Out, small: Bool) -> Out:
   match small:
     case True{}:
-      SCon{Chr{utf8.cont(c, 0n)}, SCon{Chr{utf8.cont(c, 6n)}, SCon{Chr{(224 + U32.shrn(c, 12n) : U32)}, acc}}}
+      put(put(put(o, (224 + U32.shrn(c, 12n) : U32)), utf8.cont(c, 6n)), utf8.cont(c, 0n))
     case False{}:
-      utf8.push4(c, acc)
+      utf8.push4(c, o)
 
-def utf8.push2(+c: U32, acc: String, small: Bool) -> String:
+def utf8.push2(+c: U32, o: Out, small: Bool) -> Out:
   match small:
     case True{}:
-      SCon{Chr{utf8.cont(c, 0n)}, SCon{Chr{(192 + U32.shrn(c, 6n) : U32)}, acc}}
+      put(put(o, (192 + U32.shrn(c, 6n) : U32)), utf8.cont(c, 0n))
     case False{}:
-      utf8.push3(c, acc, U32.is_lt(c, 65536))
+      utf8.push3(c, o, U32.is_lt(c, 65536))
 
-def utf8.push(+c: U32, acc: String, ascii: Bool) -> String:
+def utf8.push(+c: U32, o: Out, ascii: Bool) -> Out:
   match ascii:
     case True{}:
-      SCon{Chr{c}, acc}
+      put(o, c)
     case False{}:
-      utf8.push2(c, acc, U32.is_lt(c, 2048))
+      utf8.push2(c, o, U32.is_lt(c, 2048))
 
-def utf8.encode.go(s: String, acc: String) -> String:
+def utf8.encode.go(s: String, o: Out) -> Out:
   match s:
     case SNil{}:
-      String.reverse(acc)
+      o
     case SCon{Chr{+c}, t}:
-      utf8.encode.go(t, utf8.push(c, acc, U32.is_lt(c, 128)))
+      utf8.encode.go(t, utf8.push(c, o, U32.is_lt(c, 128)))
 
-# Text to octets.
-def utf8.encode(s: String) -> String:
-  utf8.encode.go(s, SNil{})
+# Text to octets. One pass sizes the buffer; a second fills it.
+def utf8.encode(+s: String) -> Bytes.Bytes:
+  done(utf8.encode.go(s, Out{Bytes.alloc(utf8.size(s, 0)), 0, 0}))
 
 # Decoder state: continuation bytes still needed, the allowed range of the
 # next one, the code point so far, and the output reversed.
@@ -182,13 +128,16 @@ def utf8.finish(st: Utf8) -> String:
   Utf8{+need, lo, hi, cp, +out} = st
   String.reverse(Bool.pick(String, U32.is_eq(need, 0), out, utf8.bad(out)))
 
-def utf8.decode.go(s: String, st: Utf8) -> String:
-  match s:
-    case SNil{}:
+def utf8.decode.go(n: Nat, r: Array<U32> & U32, +i: U32, st: Utf8) -> String:
+  match n:
+    case 0n:
+      (a, v) = r
       utf8.finish(st)
-    case SCon{Chr{b}, t}:
-      utf8.decode.go(t, utf8.step.st(st, b))
+    case 1n+p:
+      (a, +b) = r
+      utf8.decode.go(p, Bytes.peek(a, (i + 1 : U32)), (i + 1 : U32), utf8.step.st(st, b))
 
 # Octets to text, as WHATWG decodes UTF-8: malformed input becomes U+FFFD.
-def utf8.decode(s: String) -> String:
-  utf8.decode.go(s, Utf8{0, 128, 191, 0, SNil{}})
+def utf8.decode(b: Bytes.Bytes) -> String:
+  Bytes.Bytes{+len, buf} = b
+  utf8.decode.go(U32.to_nat(len), Bytes.peek(buf, 0), 0, Utf8{0, 128, 191, 0, SNil{}})

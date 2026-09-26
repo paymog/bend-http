@@ -1,14 +1,10 @@
 import Base
-import ./encoding.bend as Hex
 import ./LAWS.bend as Laws
 
-def Laws.encode_empty():
+def Laws.utf8_empty():
   {==}
 
-def Laws.decode_empty():
-  {==}
-
-def Laws.decode_odd():
+def Laws.utf8_decode_empty():
   {==}
 
 def Laws.utf8_ascii():
